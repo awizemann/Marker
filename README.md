@@ -1,0 +1,41 @@
+# Marker
+
+A reusable Markdown engine for native Swift apps — the school supply you write **Mark**down with.
+
+Marker is the pure core extracted from [TrapperKeeper](https://github.com/awizemann)'s editor:
+a block parser, inline scanner, GFM pipe tables, code-block model with language detection,
+incremental block diffing, image path/remote resolution, and an editor state + command engine
+(`EditorModel`, `EditorCommands`, `DocumentOutline`). Foundation/Observation only — no AppKit,
+no UI, no syntax-highlighting dependencies.
+
+## Design principle: raw-string storage
+
+The document text is the file's exact bytes. Every model type addresses the source by range and
+never mutates it, so a consumer's markdown round-trips **byte-exact by construction** — there is
+no serializer to drift. Rendering is the consumer's job (attributes over the raw string, in the
+reference implementation).
+
+## Products
+
+| Product | Status | Contents |
+|---|---|---|
+| `Marker` | ✅ here | The pure engine + 127 tests |
+| `MarkerEditor` | planned (phase 2) | TextKit 2 gentle-syntax WYSIWYG editor, themed via a token protocol |
+| `MarkerHighlighting` | planned | tree-sitter code-fence highlighting (optional, keeps light consumers dependency-free) |
+
+## Requirements
+
+Swift 6.2 (strict concurrency, MainActor default isolation), macOS 26+.
+
+## Usage
+
+```swift
+import Marker
+
+let document = MarkdownParser.parse("# Hello\n\nSome **bold** text.")
+for block in document.blocks {
+    // Each block owns a UTF-16 range of the ORIGINAL source — slices tile it exactly.
+}
+```
+
+Used by [TrapperKeeper](https://github.com/awizemann) and (soon) ShabuBox.
