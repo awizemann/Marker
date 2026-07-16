@@ -23,6 +23,11 @@ public struct MarkerTheme: Sendable {
     public var proseFamily: String?   // nil → system font
     public var monoFamily: String?    // nil → monospaced system font
     public var uiFamily: String?      // nil → system font (table grid cells, placeholder captions)
+    // Font designs — the SYSTEM font's design variant (.serif, .rounded, …) for apps that want a
+    // designed system face without bundling a family. Resolution rule: an explicit family name WINS;
+    // else a set design yields the system font with that design; else the plain system font.
+    public var proseDesign: NSFontDescriptor.SystemDesign?   // nil → plain system (when proseFamily is nil)
+    public var uiDesign: NSFontDescriptor.SystemDesign?      // nil → plain system (when uiFamily is nil)
     // Editor accents (sensible defaults; override if your palette needs)
     public var highlightBackground: Color
     public var tableZebra: Color
@@ -53,7 +58,11 @@ public struct MarkerTheme: Sendable {
         activeLineTint: Color = Color(.sRGB, red: 0x14/255.0, green: 0x28/255.0, blue: 0x18/255.0, opacity: 0.035),       // soft current-line band
         codeString: Color = Color(.sRGB, red: 0xB0/255.0, green: 0x7A/255.0, blue: 0x12/255.0, opacity: 1),   // strings — warm gold, readable on grey
         codeConstant: Color = Color(.sRGB, red: 0x2A/255.0, green: 0x7C/255.0, blue: 0x94/255.0, opacity: 1), // numbers/constants — teal
-        codeType: Color = Color(.sRGB, red: 0x0E/255.0, green: 0x7D/255.0, blue: 0x46/255.0, opacity: 1)      // types — deep green
+        codeType: Color = Color(.sRGB, red: 0x0E/255.0, green: 0x7D/255.0, blue: 0x46/255.0, opacity: 1),      // types — deep green
+        // System-font DESIGN variants — appended (with defaults) after the original parameters so
+        // every existing consumer call site keeps compiling unchanged.
+        proseDesign: NSFontDescriptor.SystemDesign? = nil,
+        uiDesign: NSFontDescriptor.SystemDesign? = nil
     ) {
         self.ink = ink
         self.inkSoft = inkSoft
@@ -74,6 +83,8 @@ public struct MarkerTheme: Sendable {
         self.codeString = codeString
         self.codeConstant = codeConstant
         self.codeType = codeType
+        self.proseDesign = proseDesign
+        self.uiDesign = uiDesign
     }
 
     /// A pre-wiring default built from system-ish colors — used only so views (CodeWellTextView) have
@@ -96,9 +107,11 @@ public struct MarkerTheme: Sendable {
 
 extension MarkerTheme {
 
-    /// The prose (body/heading) NSFont at a size/weight — the theme's `proseFamily`, or the system font.
+    /// The prose (body/heading) NSFont at a size/weight — the theme's `proseFamily` (an explicit
+    /// family always wins), else the system font in `proseDesign` (when set), else the system font.
     func proseNSFont(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {
-        Self.resolved(proseFamily, size: size, weight: weight, fallback: .systemFont(ofSize: size, weight: weight))
+        Self.resolved(proseFamily, size: size, weight: weight,
+                      fallback: Self.systemFont(size: size, weight: weight, design: proseDesign))
     }
 
     /// The mono (code/table-source) NSFont at a size/weight — the theme's `monoFamily`, or system mono.
@@ -108,10 +121,35 @@ extension MarkerTheme {
 
     /// The SwiftUI UI font (grid-table cells, placeholder captions) — the theme's `uiFamily` by name
     /// (SwiftUI's `.custom` silently falls back to the system font if the family isn't installed),
-    /// or the system font when no family is set.
+    /// else the system font in `uiDesign` (when set and mappable to `Font.Design`), else the system font.
     func uiFont(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
-        guard let uiFamily else { return .system(size: size, weight: weight) }
+        guard let uiFamily else {
+            return .system(size: size, weight: weight, design: Self.fontDesign(uiDesign) ?? .default)
+        }
         return .custom(uiFamily, size: size).weight(weight)
+    }
+
+    /// The system NSFont at a size/weight, in an optional design variant (.serif, .rounded, …).
+    /// A design whose descriptor doesn't resolve (nil `withDesign` result) falls back to the plain
+    /// system font, so a theme can never end up font-less.
+    static func systemFont(size: CGFloat, weight: NSFont.Weight, design: NSFontDescriptor.SystemDesign?) -> NSFont {
+        let plain = NSFont.systemFont(ofSize: size, weight: weight)
+        guard let design, design != .default else { return plain }
+        guard let descriptor = plain.fontDescriptor.withDesign(design),
+              let designed = NSFont(descriptor: descriptor, size: size) else { return plain }
+        return designed
+    }
+
+    /// Map an AppKit `SystemDesign` onto SwiftUI's `Font.Design` for the SwiftUI ui-font path.
+    /// nil for designs SwiftUI has no counterpart for.
+    static func fontDesign(_ design: NSFontDescriptor.SystemDesign?) -> Font.Design? {
+        switch design {
+        case .default:    return .default
+        case .serif:      return .serif
+        case .rounded:    return .rounded
+        case .monospaced: return .monospaced
+        default:          return nil
+        }
     }
 
     /// Resolve a family name to an NSFont at a size/weight, or `fallback` when the family is nil /

@@ -19,6 +19,9 @@ public nonisolated enum InlineKind: Sendable, Equatable {
     case strongEmphasis
     /// `![alt](url)` — an image reference. `contentRange` = the alt text; `destinationRange` = the url.
     case image
+    /// `[[Target Name]]` — a wiki-style link. `contentRange` = the target text; the markers are the
+    /// `[[` and `]]`. The consumer resolves the target (note title, file name, …) itself.
+    case wikiLink
 }
 
 public nonisolated struct InlineSpan: Sendable, Equatable {
@@ -69,8 +72,12 @@ public enum MarkdownInline {
         // / never clobber an enclosing span," not "match CommonMark for every adversarial run."
         return [
             make(.code, "(?<!\\\\)`([^`\\n]+)`"),
+            // Wiki links claim right after code (still literal-code-safe: `[[x]]` in backticks is
+            // already claimed) and BEFORE image/link — else the link regex could nibble a
+            // `[[a]](b)`-shaped run, and `[[…]]` must never half-match as a `[…]` link.
+            make(.wikiLink, "(?<!\\\\)\\[\\[([^\\[\\]\\n]+)\\]\\]"),
             make(.image, "(?<!\\\\)!\\[([^\\]\\n]*)\\]\\(([^)\\n]+)\\)", url: 2),   // alt may be empty: ![](p.png)
-            make(.link, "(?<!\\\\)\\[([^\\]\\n]+)\\]\\(([^)\\n]+)\\)"),
+            make(.link, "(?<!\\\\)\\[([^\\]\\n]+)\\]\\(([^)\\n]+)\\)", url: 2),     // url captured for click activation
             make(.link, "(?<!\\\\)<(https?://[^>\\s]+)>"),                            // angle autolink
             make(.link, "(?<![\\w@])https?://[^\\s<>()\\[\\]*]*[^\\s<>()\\[\\]*.,;:!?]", group: 0),  // bare URL — stops before *
             make(.strikethrough, "(?<!\\\\)~~([^~\\n]+)~~"),

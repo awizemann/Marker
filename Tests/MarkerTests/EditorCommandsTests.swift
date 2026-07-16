@@ -400,10 +400,63 @@ struct EditorCommandsTests {
         #expect(EditorCommands.newlineContinuation(in: "- item", selection: NSRange(location: 0, length: 3)) == nil)  // a selection → nil
     }
 
+    // MARK: Task checkbox toggle (click geometry)
+
+    /// Apply a checkbox toggle at a clicked index; nil when the click misses the box cells.
+    private func toggled(_ text: String, blockRange: NSRange? = nil, at location: Int) -> String? {
+        let block = blockRange ?? NSRange(location: 0, length: (text as NSString).length)
+        guard let edit = EditorCommands.taskCheckboxToggle(in: text, blockRange: block,
+                                                           location: location, selection: caret(0)) else { return nil }
+        let ns = NSMutableString(string: text)
+        ns.replaceCharacters(in: edit.range, with: edit.replacement)
+        return ns as String
+    }
+
+    @Test("a click inside [ ] checks the box; inside [x] unchecks it")
+    func checkboxToggles() {
+        // "- [ ] buy milk" — box cells are indices 2([)…5(just past ]).
+        #expect(toggled("- [ ] buy milk", at: 3) == "- [x] buy milk")
+        #expect(toggled("- [x] buy milk", at: 3) == "- [ ] buy milk")
+        #expect(toggled("- [X] buy milk", at: 3) == "- [ ] buy milk")   // capital X counts as checked
+        // Edges: the `[` cell and the insertion point just past `]` both count (insertion-point space).
+        #expect(toggled("- [ ] t", at: 2) == "- [x] t")
+        #expect(toggled("- [ ] t", at: 5) == "- [x] t")
+    }
+
+    @Test("a click outside the box cells is a no-op; indented and *-bulleted tasks still hit")
+    func checkboxGeometry() {
+        #expect(toggled("- [ ] buy milk", at: 0) == nil)    // on the bullet
+        #expect(toggled("- [ ] buy milk", at: 8) == nil)    // in the body text
+        #expect(toggled("- plain item", at: 3) == nil)      // not a task at all
+        // Indented task: the box shifts right by the indent; the same interior click flips it.
+        #expect(toggled("  - [ ] nested", at: 5) == "  - [x] nested")
+        #expect(toggled("  - [ ] nested", at: 1) == nil)    // in the indent
+        #expect(toggled("* [ ] star", at: 3) == "* [x] star")
+        // The toggle keeps the caller's selection verbatim (1-for-1 swap; offsets don't shift).
+        let edit = EditorCommands.taskCheckboxToggle(in: "- [ ] t", blockRange: NSRange(location: 0, length: 7),
+                                                     location: 3, selection: NSRange(location: 6, length: 1))
+        #expect(edit?.selectionAfter == NSRange(location: 6, length: 1))
+        // DISCRIMINATION: fails if the geometry is off by one (body clicks toggling would make plain
+        // clicks in a task's text destructive), or if indent/bullet variants miss.
+    }
+
+    @Test("checkbox toggle on a block mid-document uses absolute offsets")
+    func checkboxMidDocument() {
+        let text = "para\n- [ ] task\nafter"
+        let block = NSRange(location: 5, length: 11)   // "- [ ] task\n"
+        let edit = EditorCommands.taskCheckboxToggle(in: text, blockRange: block, location: 8, selection: caret(0))
+        #expect(edit?.range == NSRange(location: 8, length: 1))
+        #expect(edit?.replacement == "x")
+        // A click at the same LOCAL offset but outside this block's cells → nil.
+        #expect(EditorCommands.taskCheckboxToggle(in: text, blockRange: block, location: 12, selection: caret(0)) == nil)
+    }
+
     // MARK: Safety
 
     @Test("an out-of-bounds selection is rejected, not crashed")
     func outOfBoundsRejected() {
         #expect(EditorCommands.textEdit(for: .bold, in: "hi", selection: NSRange(location: 5, length: 3)) == nil)
+        #expect(EditorCommands.taskCheckboxToggle(in: "- [ ] t", blockRange: NSRange(location: 0, length: 99),
+                                                  location: 3, selection: caret(0)) == nil)
     }
 }

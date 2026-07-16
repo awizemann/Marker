@@ -228,7 +228,7 @@ struct EditorStyler {
             case .code:
                 storage.addAttribute(.font, value: mono(proseSize - 3), range: content)
                 storage.addAttribute(.foregroundColor, value: NSColor(theme.deep), range: content)
-            case .link:
+            case .link, .wikiLink:
                 storage.addAttribute(.foregroundColor, value: NSColor(theme.primary), range: content)
                 storage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: content)
             case .strikethrough:
@@ -245,8 +245,10 @@ struct EditorStyler {
                 let m = NSRange(location: base + marker.location, length: marker.length)
                 // Strikethrough (`~~`) and highlight (`==`) markers collapse to ~0 width — the strike
                 // line / highlight background already signals the span, so the text sits flush-left
-                // instead of indented by the dimmed markers. Bold/italic/code markers stay dimmed-visible.
-                if span.kind == .strikethrough || span.kind == .highlight {
+                // instead of indented by the dimmed markers. Wiki-link `[[`/`]]` markers collapse the
+                // same way (the primary+underline treatment already signals the link).
+                // Bold/italic/code markers stay dimmed-visible.
+                if span.kind == .strikethrough || span.kind == .highlight || span.kind == .wikiLink {
                     collapseMarker(m, in: storage)
                 } else {
                     dimMarker(m, hidden: hideMarkers, in: storage)

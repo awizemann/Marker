@@ -147,6 +147,33 @@ public nonisolated enum EditorCommands {
         return nil
     }
 
+    // MARK: - Task checkbox toggle (click on the `[ ]`/`[x]` cells)
+
+    /// The one-character edit that toggles a task item's checkbox when a click lands INSIDE its
+    /// `[ ]` / `[x]` marker cells. `blockRange` is the `.taskItem` block's range in `text`;
+    /// `location` is the clicked character index (an insertion-point index, so the `[`…`]` cells
+    /// span `boxStart...boxEnd` inclusive). Returns nil when the click is outside the cells or the
+    /// block doesn't start with a task marker. The replacement is space↔x at the box interior;
+    /// `selectionAfter` keeps the caller's selection — a 1-for-1 character swap shifts no offsets,
+    /// so the caret stays exactly where it was.
+    public static func taskCheckboxToggle(in text: String, blockRange: NSRange, location: Int, selection: NSRange) -> TextEdit? {
+        let ns = text as NSString
+        guard blockRange.location >= 0, NSMaxRange(blockRange) <= ns.length else { return nil }
+        let blockText = ns.substring(with: blockRange)
+        // The leading task marker on the block's FIRST line (same shape as taskContinuationRE, but
+        // anchored with a lookahead so the trailing space isn't consumed into the box geometry).
+        guard let m = blockText.range(of: "^\\s*[-*+] \\[[ xX]\\](?= )", options: .regularExpression) else { return nil }
+        let markerLength = (String(blockText[m]) as NSString).length   // "…- [x]" — indent + bullet + box
+        let boxEnd = blockRange.location + markerLength                // index just past `]`
+        let interior = boxEnd - 2                                      // the ` `/`x` cell
+        let boxStart = boxEnd - 3                                      // the `[`
+        guard location >= boxStart, location <= boxEnd else { return nil }
+        let isChecked = ns.character(at: interior) != UInt16(UInt8(ascii: " "))
+        return TextEdit(range: NSRange(location: interior, length: 1),
+                        replacement: isChecked ? " " : "x",
+                        selectionAfter: selection)
+    }
+
     // MARK: - Inline wrap / toggle
 
     private static func wrap(_ marker: String, in ns: NSString, selection: NSRange) -> TextEdit {

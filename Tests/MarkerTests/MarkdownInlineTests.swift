@@ -231,6 +231,61 @@ struct MarkdownInlineTests {
         // if the url isn't captured in destinationRange, or if an empty-alt image is missed.
     }
 
+    @Test("wiki links: [[Target]] is one .wikiLink span with the target as content and [[ ]] markers")
+    func wikiLinks() {
+        // Plain — the whole block is the wiki link.
+        let plain = "[[Target Name]]"
+        let p = try! #require(spans(plain).first)
+        #expect(spans(plain).count == 1)
+        #expect(p.kind == .wikiLink)
+        #expect(content(plain, p) == "Target Name")
+        #expect(p.markerRanges.count == 2)   // the [[ and the ]]
+        #expect(p.markerRanges.map(\.length) == [2, 2])
+
+        // Mid-sentence.
+        let mid = "see [[Meeting Notes]] for details"
+        let m = try! #require(spans(mid).first)
+        #expect(m.kind == .wikiLink)
+        #expect(content(mid, m) == "Meeting Notes")
+
+        // Two on a line — both detected, non-overlapping, in order.
+        let two = "[[Alpha]] and [[Beta]]"
+        let sp = spans(two)
+        #expect(sp.map(\.kind) == [.wikiLink, .wikiLink])
+        #expect(content(two, sp[0]) == "Alpha")
+        #expect(content(two, sp[1]) == "Beta")
+
+        // Adjacent with interstitial text: [[a]]b[[c]] — two spans, the `b` stays plain.
+        let adj = "[[a]]b[[c]]"
+        let adjSpans = spans(adj)
+        #expect(adjSpans.map(\.kind) == [.wikiLink, .wikiLink])
+        #expect(content(adj, adjSpans[0]) == "a")
+        #expect(content(adj, adjSpans[1]) == "c")
+        // DISCRIMINATION: fails if [[…]] isn't scanned, if the markers aren't the [[/]] pair, or if
+        // a greedy pattern swallows "a]]b[[c" as one target.
+    }
+
+    @Test("wiki links: unclosed [[x stays plain; [[x]] inside backticks stays code")
+    func wikiLinkNonMatches() {
+        #expect(spans("open [[x and nothing else").isEmpty)     // unclosed → no span at all
+        let code = "`a [[x]] b`"
+        #expect(spans(code).count == 1)
+        #expect(spans(code).first?.kind == .code)               // code claims first; no wiki link inside
+        // A markdown link is still a link (wikiLink's [[ pattern must not eat [text](url)).
+        #expect(spans("[text](u)").first?.kind == .link)
+        // DISCRIMINATION: fails if an unclosed [[ half-matches, or if wikiLink outprioritizes literal code.
+    }
+
+    @Test("link destinations are captured: [text](url) carries url in destinationRange")
+    func linkDestination() {
+        let s = "see [docs](https://ex.com/d) now"
+        let link = try! #require(spans(s).first)
+        #expect(link.kind == .link)
+        let dest = try! #require(link.destinationRange)
+        #expect((s as NSString).substring(with: dest) == "https://ex.com/d")
+        // DISCRIMINATION: fails if the markdown-link url group isn't surfaced (click activation needs it).
+    }
+
     @Test("soleImageSpan: a lone ![alt](url) line is a block image; image-in-text is not")
     func soleImage() {
         #expect(MarkdownInline.soleImageURL(in: "![a](pic.png)") == "pic.png")

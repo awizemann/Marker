@@ -2,6 +2,14 @@ import SwiftUI
 import AppKit
 import Marker
 
+/// What a Cmd+click in the editor activated: a URL (from `[text](url)`, `<url>`, or a bare URL) or
+/// a wiki-link target (the text inside `[[…]]`). The consumer resolves/open its own way — the editor
+/// never opens anything itself.
+public enum MarkerLinkTarget: Sendable {
+    case url(String)
+    case wiki(String)
+}
+
 /// Hosts a native **TextKit 2** NSTextView for one markdown document. The text storage IS the raw
 /// markdown (canonical); editing pushes the new string + caret back into the EditorModel, which
 /// reparses. Block styling (WYSIWYG + the cursor-line source reveal) is applied in P1.3 — here the
@@ -13,11 +21,18 @@ public struct EditorView: NSViewRepresentable {
     /// Optional code-fence token provider (MarkerHighlighting's `CodeHighlighter`); nil → code
     /// fences keep their flat mono style.
     let highlighter: (any CodeTokenProviding)?
+    /// Called when the user **Cmd+clicks** a link (`[text](url)` / `<url>` / bare URL) or a
+    /// `[[wiki link]]` in Live mode. Cmd+click is the editor convention: a PLAIN click must keep its
+    /// editing ergonomics (it just places the caret, even inside a link), so activation requires the
+    /// modifier. nil → links render styled but aren't clickable.
+    public var onLinkActivate: ((MarkerLinkTarget) -> Void)?
 
-    public init(model: EditorModel, theme: MarkerTheme, highlighter: (any CodeTokenProviding)? = nil) {
+    public init(model: EditorModel, theme: MarkerTheme, highlighter: (any CodeTokenProviding)? = nil,
+                onLinkActivate: ((MarkerLinkTarget) -> Void)? = nil) {
         self.model = model
         self.theme = theme
         self.highlighter = highlighter
+        self.onLinkActivate = onLinkActivate
     }
 
     var styler: EditorStyler { EditorStyler(theme: theme, highlighter: highlighter) }
@@ -79,6 +94,12 @@ public struct EditorView: NSViewRepresentable {
         // Wire the ⌘K mutation seam: the coordinator is the only thing that can apply an undo-registered
         // edit + read the caret rect. The model holds it weakly (see EditorTextMutating).
         model.mutator = context.coordinator
+        // Click interception (checkbox toggles on plain click, Cmd+click link activation): the text
+        // view asks the coordinator BEFORE default mouseDown handling; `true` consumes the click.
+        context.coordinator.onLinkActivate = onLinkActivate
+        textView.onMouseDown = { [weak coordinator = context.coordinator] index, commandHeld in
+            coordinator?.handleMouseDown(at: index, commandHeld: commandHeld) ?? false
+        }
         EditorScrollTrace.install(scrollView: scrollView)   // no-op unless TK_SCROLL_TRACE=1
         return scrollView
     }
@@ -87,6 +108,7 @@ public struct EditorView: NSViewRepresentable {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         let coordinator = context.coordinator
         coordinator.styler = styler   // keep keystroke restyles on the CURRENT theme/highlighter
+        coordinator.onLinkActivate = onLinkActivate   // closures aren't comparable; just keep it fresh
         // Read-only lock (trial expired / license revoked): the text view stays SELECTABLE (read,
         // scroll, copy all live) but not EDITABLE, so typing/paste/delete are refused natively. Read
         // `model.isReadOnly` here so a lock flip re-invokes this method; set it BEFORE the restyle
@@ -167,6 +189,9 @@ public struct EditorView: NSViewRepresentable {
         /// The style inputs the storage was last FULLY styled for; `updateNSView` re-runs the full pass
         /// only when these change (or the text is swapped) — never on a caret move (see t-6cfaf799).
         var styleModes: EditorView.StyleModes?
+        /// The consumer's link-activation callback (Cmd+click on a link / wiki link). Kept on the
+        /// coordinator (refreshed each `updateNSView`) so the text view's mouseDown seam reaches it.
+        var onLinkActivate: ((MarkerLinkTarget) -> Void)?
 
         init(model: EditorModel, styler: EditorStyler) {
             self.model = model
@@ -277,6 +302,47 @@ public struct EditorView: NSViewRepresentable {
             target.origin.y += delta
             clip.scroll(to: clip.constrainBoundsRect(target).origin)
             scrollView.reflectScrolledClipView(clip)
+        }
+
+        /// Intercept a mouseDown BEFORE NSTextView's default handling. Returns `true` to consume the
+        /// click. Two affordances, both Live-mode only (Source mode is raw editing — no magic):
+        /// - PLAIN click inside a task item's `[ ]`/`[x]` cells → toggle it (undo-registered via the
+        ///   same `apply(_:)` seam as ⌘K; a 1-for-1 char swap, so the caret/selection stay put).
+        /// - **Cmd+click** on a `.link` (content or destination) or `.wikiLink` content span → fire
+        ///   `onLinkActivate`. A plain click on a link just places the caret (editing ergonomics win;
+        ///   Cmd+click is the editor convention for "follow link").
+        func handleMouseDown(at index: Int, commandHeld: Bool) -> Bool {
+            guard !model.isSourceMode, let block = model.document.block(at: index) else { return false }
+            guard commandHeld else {
+                // Plain click: checkbox toggle only.
+                guard case .taskItem = block.kind, !model.isReadOnly,
+                      let edit = EditorCommands.taskCheckboxToggle(in: model.text, blockRange: block.range,
+                                                                   location: index, selection: model.selection)
+                else { return false }
+                apply(edit)
+                return true
+            }
+            guard let onLinkActivate else { return false }
+            let local = index - block.range.location
+            let ns = block.text as NSString
+            for span in MarkdownInline.spans(in: block.text) {
+                switch span.kind {
+                case .link:
+                    let overDestination = span.destinationRange.map { NSLocationInRange(local, $0) } ?? false
+                    guard NSLocationInRange(local, span.contentRange) || overDestination else { continue }
+                    // `[text](url)` carries its destination; autolinks/bare URLs ARE their content.
+                    let url = ns.substring(with: span.destinationRange ?? span.contentRange)
+                    onLinkActivate(.url(url))
+                    return true
+                case .wikiLink:
+                    guard NSLocationInRange(local, span.contentRange) else { continue }
+                    onLinkActivate(.wiki(ns.substring(with: span.contentRange)))
+                    return true
+                default:
+                    continue
+                }
+            }
+            return false
         }
 
         /// Intercept Enter to continue a list/quote (or exit an empty item). Applied undo-registered via

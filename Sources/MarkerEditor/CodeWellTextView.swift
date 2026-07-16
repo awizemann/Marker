@@ -22,6 +22,20 @@ final class CodeWellTextView: NSTextView {
     /// Set by the host in `makeNSView`.
     var onDropImages: (([CapturedImageDrop]) -> Void)?
 
+    /// Pre-mouseDown seam, set by the host in `makeNSView`: called with the clicked character index
+    /// (insertion-point space) and whether ⌘ was held. Return `true` to CONSUME the click (checkbox
+    /// toggle, Cmd+click link activation); `false` falls through to NSTextView's normal caret placement.
+    var onMouseDown: ((_ characterIndex: Int, _ commandHeld: Bool) -> Bool)?
+
+    override func mouseDown(with event: NSEvent) {
+        if let onMouseDown {
+            let point = convert(event.locationInWindow, from: nil)
+            let index = characterIndexForInsertion(at: point)
+            if onMouseDown(index, event.modifierFlags.contains(.command)) { return }
+        }
+        super.mouseDown(with: event)
+    }
+
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
         imageURLs(from: sender).isEmpty ? super.draggingEntered(sender) : .copy
     }
