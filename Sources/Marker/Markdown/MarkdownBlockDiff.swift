@@ -1,6 +1,6 @@
 //
 //  MarkdownBlockDiff.swift
-//  TrapperKeeperCore — Markdown
+//  Marker — (ex TrapperKeeperCore) Markdown
 //
 //  Which blocks a text edit actually changed. A keystroke reparses the whole document, but almost
 //  always only ONE block's text differs; every other block is byte-identical (just shifted). The

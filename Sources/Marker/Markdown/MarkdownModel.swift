@@ -1,6 +1,6 @@
 //
 //  MarkdownModel.swift
-//  TrapperKeeperCore — Markdown (P1.1)
+//  Marker — (ex TrapperKeeperCore) Markdown (P1.1)
 //
 //  The block model the TextKit editor styles against. A document is a sequence of blocks; each
 //  block owns a contiguous UTF-16 `NSRange` of the source INCLUDING its trailing line terminator.

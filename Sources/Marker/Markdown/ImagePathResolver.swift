@@ -1,6 +1,6 @@
 //
 //  ImagePathResolver.swift
-//  TrapperKeeperCore — Markdown (Images v1, t-c6f28efb)
+//  Marker — (ex TrapperKeeperCore) Markdown (Images v1, t-c6f28efb)
 //
 //  Pure classification of a Markdown image destination (the `url` in `![alt](url)`) into what v1 can
 //  do with it. NO I/O and NO security scope here — this only turns the raw string into a candidate

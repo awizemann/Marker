@@ -1,6 +1,6 @@
 //
 //  EditorTool.swift
-//  TrapperKeeperCore — Editor (P4.2)
+//  Marker — (ex TrapperKeeperCore) Editor (P4.2)
 //
 //  The ⌘K palette's menu: each tool is a labeled `EditorCommand`. Two toolsets — one for a bare caret
 //  (insert/format), one for an active selection (wrap / turn-into / operate-on-lines) — mirroring

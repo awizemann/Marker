@@ -1,6 +1,6 @@
 //
 //  MarkdownCodeBlock.swift
-//  TrapperKeeperCore — Markdown
+//  Marker — (ex TrapperKeeperCore) Markdown
 //
 //  Pure helper for the interior of a fenced `.codeBlock`: the CODE region within the block, i.e. the
 //  block minus its opening and closing fence lines. Used to scope syntax highlighting to the code (not

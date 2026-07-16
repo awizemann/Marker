@@ -1,6 +1,6 @@
 //
 //  MarkdownInline.swift
-//  TrapperKeeperCore — Markdown (P1.3)
+//  Marker — (ex TrapperKeeperCore) Markdown (P1.3)
 //
 //  Inline span scanner over a single block's text — finds strong/emphasis/code/link spans so the
 //  editor can render the content (bold, italic, mono) while dimming the syntax markers. Like the

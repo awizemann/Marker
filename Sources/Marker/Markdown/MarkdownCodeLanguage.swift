@@ -1,6 +1,6 @@
 //
 //  MarkdownCodeLanguage.swift
-//  TrapperKeeperCore — Markdown
+//  Marker — (ex TrapperKeeperCore) Markdown
 //
 //  Best-effort language guess for a fenced code block that has NO explicit ```lang tag, so the editor
 //  can still syntax-highlight it (like GitHub auto-detecting a bare fence). It's a RENDER decision —

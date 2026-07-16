@@ -1,6 +1,6 @@
 //
 //  MarkdownParser.swift
-//  TrapperKeeperCore — Markdown (P1.1)
+//  Marker — (ex TrapperKeeperCore) Markdown (P1.1)
 //
 //  A line-oriented scanner that classifies the source into TILING blocks (see memory: "Editor
 //  architecture: raw-string storage + attribute styling"). It NEVER transforms the source — it only

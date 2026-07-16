@@ -1,6 +1,6 @@
 //
 //  MarkdownTable.swift
-//  TrapperKeeperCore — Markdown
+//  Marker — (ex TrapperKeeperCore) Markdown
 //
 //  The PURE, byte-aware model behind grid-table rendering. `MarkdownParser` already groups
 //  consecutive `|`-delimited lines into a `.table` block; this turns that block's verbatim source

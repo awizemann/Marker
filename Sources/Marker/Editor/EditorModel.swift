@@ -1,6 +1,6 @@
 //
 //  EditorModel.swift
-//  TrapperKeeperCore — Editor (P1.2)
+//  Marker — (ex TrapperKeeperCore) Editor (P1.2)
 //
 //  The editor's state, platform-agnostic so the macOS NSTextView host (and a future iOS UITextView
 //  host) bind to the same logic. The raw `text` is canonical; `document` is the derived parse used

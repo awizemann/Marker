@@ -1,6 +1,6 @@
 //
 //  RemoteImageFetcher.swift
-//  TrapperKeeperCore — Markdown (Images v2, t-c6f28efb)
+//  Marker — (ex TrapperKeeperCore) Markdown (Images v2, t-c6f28efb)
 //
 //  Fetches remote (`http(s)`) images for inline rendering — the app's only outbound network use. Off
 //  the main actor, timeout- + size-capped, with a small in-process cache so re-resolving the same doc

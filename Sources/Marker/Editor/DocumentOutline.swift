@@ -1,6 +1,6 @@
 //
 //  DocumentOutline.swift
-//  TrapperKeeperCore — Editor (P5b)
+//  Marker — (ex TrapperKeeperCore) Editor (P5b)
 //
 //  The heading outline the right-side inspector renders — a PURE derivation of the already-parsed
 //  `MarkdownDocument` (no new parse, no I/O). The editor reparses on every edit, so the outline

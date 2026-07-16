@@ -1,6 +1,6 @@
 //
 //  EditorCommands.swift
-//  TrapperKeeperCore — Editor (P4.1)
+//  Marker — (ex TrapperKeeperCore) Editor (P4.1)
 //
 //  The PURE, byte-precise logic the ⌘K palette runs against — no UI, no NSTextView. Each command maps
 //  (current raw text + selection) → a single `TextEdit`: an exact UTF-16 range to replace, the
