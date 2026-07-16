@@ -266,6 +266,18 @@ public nonisolated enum EditorCommands {
                         selectionAfter: NSRange(location: caret, length: 0))
     }
 
+    // MARK: - Dropped plain-text gate (the onDropText seam)
+
+    /// The plain string a drop offers the text-drop seam (`EditorView.onDropText`), or nil when the
+    /// drop doesn't qualify: a drag carrying file URLs keeps its own paths (images →
+    /// `onDropImages`, other files → `onDropFiles` — a file drag often ALSO writes a string form
+    /// of its path to the pasteboard, which must not double-handle), and an empty string has
+    /// nothing to transform. Pure so the gating is unit-testable off the pasteboard.
+    public static func plainTextDrop(hasFileURLs: Bool, pasteboardString: String?) -> String? {
+        guard !hasFileURLs, let string = pasteboardString, !string.isEmpty else { return nil }
+        return string
+    }
+
     // MARK: - Inline wrap / toggle
 
     private static func wrap(_ marker: String, in ns: NSString, selection: NSRange) -> TextEdit {

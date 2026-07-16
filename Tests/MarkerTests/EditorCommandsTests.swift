@@ -495,4 +495,28 @@ struct EditorCommandsTests {
         #expect(EditorCommands.droppedMarkdownInsertion("[[x]]", in: "hi",
                                                         selection: NSRange(location: 1, length: 5)) == nil)
     }
+
+    // MARK: Plain-text drop gate (the onDropText seam)
+
+    @Test("a plain-string drag passes the text-drop gate verbatim")
+    func plainTextDropPasses() {
+        let uuid = "8B4A0C6E-2F41-4D6B-9A57-3C21D0EF5A19"
+        #expect(EditorCommands.plainTextDrop(hasFileURLs: false, pasteboardString: uuid) == uuid)
+        // Whitespace-bearing strings pass too — what to DO with them is the consumer's call.
+        #expect(EditorCommands.plainTextDrop(hasFileURLs: false, pasteboardString: "two words") == "two words")
+    }
+
+    @Test("a drag carrying file URLs never reaches the text seam, even with a string form aboard")
+    func plainTextDropYieldsToFileDrops() {
+        // Finder drags also write the path as a string — the file/image seams own those drops.
+        #expect(EditorCommands.plainTextDrop(hasFileURLs: true, pasteboardString: "/tmp/pic.png") == nil)
+        // DISCRIMINATION: fails if the gate goes string-first — a dropped image would insert its
+        // path as text instead of persisting through the image seam.
+    }
+
+    @Test("no string / empty string → nil (drop falls through to default handling)")
+    func plainTextDropRejectsEmpty() {
+        #expect(EditorCommands.plainTextDrop(hasFileURLs: false, pasteboardString: nil) == nil)
+        #expect(EditorCommands.plainTextDrop(hasFileURLs: false, pasteboardString: "") == nil)
+    }
 }

@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import CoreGraphics
 @testable import Marker
 
 @MainActor
@@ -64,5 +65,26 @@ struct EditorModelTests {
         #expect(model.isSourceMode == source0)
         #expect(model.hideMarkers == hide0)
         #expect(model.indentHeaders == indent0)
+    }
+
+    @Test("insertImageReference writes ![alt](url) — alt filled when given, empty by default")
+    func insertImageReferenceAlt() {
+        /// Records the edits the model hands the host (stands in for the NSTextView coordinator).
+        final class RecordingMutator: EditorTextMutating {
+            var applied: [TextEdit] = []
+            func apply(_ edit: TextEdit) { applied.append(edit) }
+            func caretPointInWindow() -> CGPoint? { nil }
+            func focusEditor() {}
+            func scrollToRange(_ range: NSRange) {}
+        }
+        let model = EditorModel(text: "")
+        let mutator = RecordingMutator()
+        model.mutator = mutator
+
+        model.insertImageReference(url: "_Attachments/receipt.png", alt: "receipt")
+        #expect(mutator.applied.last?.replacement == "![receipt](_Attachments/receipt.png)\n")
+
+        model.insertImageReference(url: "a.png")   // default alt: the pre-0.5.0 empty cell, unchanged
+        #expect(mutator.applied.last?.replacement == "![](a.png)\n")
     }
 }

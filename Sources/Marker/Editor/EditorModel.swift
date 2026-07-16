@@ -155,7 +155,8 @@ public final class EditorModel {
     /// Insert a block-level image reference at the caret on its OWN paragraph, leaving the caret on the
     /// line AFTER it (so the block is inactive and renders immediately). Applied through the mutator so
     /// undo registers and the normal reparse/restyle runs. No-op when not hosted (tests).
-    public func insertImageReference(url: String) {
+    /// `alt` fills the `![alt]` cell (default empty — the pre-0.5.0 form, existing callers unchanged).
+    public func insertImageReference(url: String, alt: String = "") {
         guard !isReadOnly, let mutator else { return }
         let ns = text as NSString
         // Insert at a ZERO-LENGTH point at the caret — a block-image insert must NEVER delete a
@@ -165,7 +166,7 @@ public final class EditorModel {
         // follows (else the parser merges the image line with it and it renders raw).
         let lead = (loc > 0 && ns.character(at: loc - 1) != 0x0A) ? "\n" : ""
         let trail = (loc < ns.length && ns.character(at: loc) != 0x0A) ? "\n" : ""
-        let core = "![](\(url))\n"
+        let core = "![\(alt)](\(url))\n"
         let caret = loc + (lead as NSString).length + (core as NSString).length   // start of next line
         mutator.apply(TextEdit(range: NSRange(location: loc, length: 0), replacement: lead + core + trail,
                                selectionAfter: NSRange(location: caret, length: 0)))

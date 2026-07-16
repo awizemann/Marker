@@ -41,17 +41,26 @@ public struct EditorView: NSViewRepresentable {
     /// any selection), or nil to decline — the drop then falls through to NSTextView's default
     /// handling. nil seam (the default) leaves existing consumers byte-identical.
     public var onDropFiles: (([URL]) -> String?)?
+    /// PLAIN-TEXT drop seam: called with the string of a plain-string drag (a dragged list row, a
+    /// dragged text snippet — never a drag carrying file URLs, which keep the image/file seams
+    /// above). Return the markdown to insert at the drop caret (undo-registered, replaces any
+    /// selection), or nil to decline — the drop then falls through to NSTextView's DEFAULT string
+    /// insertion, so ordinary text drags still land as text. nil seam (the default) leaves
+    /// existing consumers byte-identical.
+    public var onDropText: ((String) -> String?)?
 
     public init(model: EditorModel, theme: MarkerTheme, highlighter: (any CodeTokenProviding)? = nil,
                 onLinkActivate: ((MarkerLinkTarget) -> Void)? = nil,
                 wikiCompletions: ((String) -> [String])? = nil,
-                onDropFiles: (([URL]) -> String?)? = nil) {
+                onDropFiles: (([URL]) -> String?)? = nil,
+                onDropText: ((String) -> String?)? = nil) {
         self.model = model
         self.theme = theme
         self.highlighter = highlighter
         self.onLinkActivate = onLinkActivate
         self.wikiCompletions = wikiCompletions
         self.onDropFiles = onDropFiles
+        self.onDropText = onDropText
     }
 
     var styler: EditorStyler { EditorStyler(theme: theme, highlighter: highlighter) }
@@ -131,6 +140,14 @@ public struct EditorView: NSViewRepresentable {
                 coordinator?.handleDroppedFiles(urls) ?? false
             }
         }
+        // Plain-text drop seam: same wiring discipline as onDropFiles (hook set only while a
+        // consumer closure exists, so a nil seam keeps drag handling byte-identical to pre-seam).
+        context.coordinator.onDropText = onDropText
+        if onDropText != nil {
+            textView.onDropText = { [weak coordinator = context.coordinator] string in
+                coordinator?.handleDroppedText(string) ?? false
+            }
+        }
         EditorScrollTrace.install(scrollView: scrollView)   // no-op unless TK_SCROLL_TRACE=1
         return scrollView
     }
@@ -142,13 +159,17 @@ public struct EditorView: NSViewRepresentable {
         coordinator.onLinkActivate = onLinkActivate   // closures aren't comparable; just keep it fresh
         coordinator.wikiCompletions = wikiCompletions
         coordinator.onDropFiles = onDropFiles
+        coordinator.onDropText = onDropText
         coordinator.theme = theme
-        // Keep the text view's drop hook in step with the consumer's seam: wired only while a
+        // Keep the text view's drop hooks in step with the consumer's seams: wired only while a
         // consumer closure exists, so a nil seam keeps the text view's drag handling byte-identical
-        // to pre-seam behavior (draggingEntered/performDragOperation gate on the hook's presence).
+        // to pre-seam behavior (draggingEntered/performDragOperation gate on the hooks' presence).
         if let codeWell = textView as? CodeWellTextView {
             codeWell.onDropFiles = onDropFiles == nil ? nil : { [weak coordinator] urls in
                 coordinator?.handleDroppedFiles(urls) ?? false
+            }
+            codeWell.onDropText = onDropText == nil ? nil : { [weak coordinator] string in
+                coordinator?.handleDroppedText(string) ?? false
             }
         }
         // Read-only lock (trial expired / license revoked): the text view stays SELECTABLE (read,
@@ -240,6 +261,9 @@ public struct EditorView: NSViewRepresentable {
         /// The consumer's file-drop seam (nil → feature off; drops fall through to the text view's
         /// default handling). Refreshed each `updateNSView` like `onLinkActivate`.
         var onDropFiles: (([URL]) -> String?)?
+        /// The consumer's plain-text drop seam (nil → feature off; string drags keep NSTextView's
+        /// default insertion). Refreshed each `updateNSView` like `onDropFiles`.
+        var onDropText: ((String) -> String?)?
         /// The live theme for the completion popup (refreshed each `updateNSView` so a consumer
         /// theme change reaches it — same staleness rule as `styler`).
         var theme: MarkerTheme
@@ -440,6 +464,23 @@ public struct EditorView: NSViewRepresentable {
         func handleDroppedFiles(_ urls: [URL]) -> Bool {
             guard let onDropFiles, !model.isReadOnly, let textView else { return false }
             guard let markdown = onDropFiles(urls),
+                  let edit = EditorCommands.droppedMarkdownInsertion(markdown, in: textView.string,
+                                                                     selection: textView.selectedRange())
+            else { return false }
+            apply(edit)
+            return true
+        }
+
+        /// A PLAIN-STRING drop (the text view already collapsed the selection to a caret at the
+        /// drop point, and already gated out drags carrying file URLs). Ask the consumer for a
+        /// markdown replacement; insert it there through the undo-registered `apply(_:)` — the
+        /// same insertion math as the file seam. Returns `true` when consumed — `false` (no
+        /// consumer, read-only document, or the consumer declined with nil) lets the text view
+        /// fall through to NSTextView's DEFAULT string insertion, so ordinary text drags still
+        /// land as plain text at the drop point.
+        func handleDroppedText(_ string: String) -> Bool {
+            guard let onDropText, !model.isReadOnly, let textView else { return false }
+            guard let markdown = onDropText(string),
                   let edit = EditorCommands.droppedMarkdownInsertion(markdown, in: textView.string,
                                                                      selection: textView.selectedRange())
             else { return false }

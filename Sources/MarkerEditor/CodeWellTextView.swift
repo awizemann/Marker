@@ -31,6 +31,15 @@ final class CodeWellTextView: NSTextView {
     /// are intercepted, everything else goes to `super`.
     var onDropFiles: (([URL]) -> Bool)?
 
+    /// PLAIN-STRING drops (a dragged list row, a dragged text snippet): the string is offered to
+    /// the host BEFORE NSTextView's default string insertion — but only when the seam is wired AND
+    /// the drag carries no file URLs (file/image drops keep their own paths above; a file drag
+    /// often ALSO writes its path as a string, which must not double-handle). Returns `true` when
+    /// consumed (the consumer produced markdown that was inserted); `false` falls through to the
+    /// default insertion, so an ordinary text drag still lands as text. nil (the default) keeps
+    /// the pre-seam behavior byte-identical. Set by the host in `makeNSView`.
+    var onDropText: ((String) -> Bool)?
+
     /// Pre-mouseDown seam, set by the host in `makeNSView`: called with the clicked character index
     /// (insertion-point space) and whether ⌘ was held. Return `true` to CONSUME the click (checkbox
     /// toggle, Cmd+click link activation); `false` falls through to NSTextView's normal caret placement.
@@ -89,6 +98,15 @@ final class CodeWellTextView: NSTextView {
                 setSelectedRange(NSRange(location: characterIndexForInsertion(at: convert(sender.draggingLocation, from: nil)), length: 0))
                 if onDropFiles?(files) == true { return true }
             }
+        }
+        // PLAIN-STRING drop → the text seam (gated by the pure `plainTextDrop`: never when the drag
+        // carries file URLs — those keep the paths above). Caret placed at the drop point first, so
+        // the consumer's markdown AND the fall-through default insertion both land where dropped.
+        if onDropText != nil,
+           let string = EditorCommands.plainTextDrop(hasFileURLs: !fileURLs(from: sender).isEmpty,
+                                                     pasteboardString: sender.draggingPasteboard.string(forType: .string)) {
+            setSelectedRange(NSRange(location: characterIndexForInsertion(at: convert(sender.draggingLocation, from: nil)), length: 0))
+            if onDropText?(string) == true { return true }
         }
         return super.performDragOperation(sender)   // non-file / mint failed / consumer declined → default
     }
