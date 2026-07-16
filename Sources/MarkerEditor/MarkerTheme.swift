@@ -119,6 +119,14 @@ extension MarkerTheme {
         Self.resolved(monoFamily, size: size, weight: weight, fallback: .monospacedSystemFont(ofSize: size, weight: weight))
     }
 
+    /// The SwiftUI mono font (palette symbols, hints, keycaps) — the theme's `monoFamily` by name
+    /// (SwiftUI's `.custom` silently falls back to the system font if the family isn't installed),
+    /// else the monospaced system font.
+    func monoFont(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
+        guard let monoFamily else { return .system(size: size, weight: weight, design: .monospaced) }
+        return .custom(monoFamily, size: size).weight(weight)
+    }
+
     /// The SwiftUI UI font (grid-table cells, placeholder captions) — the theme's `uiFamily` by name
     /// (SwiftUI's `.custom` silently falls back to the system font if the family isn't installed),
     /// else the system font in `uiDesign` (when set and mappable to `Font.Design`), else the system font.
