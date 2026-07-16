@@ -174,6 +174,81 @@ public nonisolated enum EditorCommands {
                         selectionAfter: selection)
     }
 
+    // MARK: - Wiki-link completion (typing inside an unclosed `[[`)
+
+    /// The live wiki-link completion context at a caret: non-nil while the caret sits inside an
+    /// UNCLOSED `[[` on the current line — `query` is the text between the `[[` and the caret, and
+    /// `replaceRange` is that query's range in `text` (what an accepted completion replaces).
+    ///
+    /// Returns nil (no completion) when:
+    /// - there's a real selection (completion is a caret-typing aid), or
+    /// - no `[[` opens before the caret on the caret's line, or
+    /// - a bracket appears between the `[[` and the caret (the link closed — the trigger dies), or
+    /// - a `]]` after the caret closes THIS link before any new `[[` opens (caret inside a closed
+    ///   `[[…]]` — editing an existing link is not completing a new one), or
+    /// - the `[[` sits inside an inline code span, or the caret is in a fenced code block
+    ///   (code is literal — `[[` there is bytes, not a link).
+    ///
+    /// `document` is the current parse when the caller already has one (the editor model reparses
+    /// every keystroke); nil parses internally — same result, one extra parse.
+    /// `@MainActor` (unlike the enum's other pure statics): it leans on the parser + inline scanner,
+    /// which live on the package's MainActor default — same isolation as its editor-host callers.
+    @MainActor
+    public static func wikiCompletionContext(in text: String, selection: NSRange,
+                                             document: MarkdownDocument? = nil) -> (query: String, replaceRange: NSRange)? {
+        let ns = text as NSString
+        guard selection.length == 0, selection.location >= 0, selection.location <= ns.length else { return nil }
+        let caret = selection.location
+
+        // Never inside a fenced code block (``` fences span lines, so check the caret's BLOCK).
+        let doc = document ?? MarkdownParser.parse(text)
+        if let block = doc.block(at: caret), case .codeBlock = block.kind { return nil }
+
+        let lineRange = contentLineRange(at: caret, in: ns)
+        let line = ns.substring(with: lineRange) as NSString
+        let caretInLine = caret - lineRange.location
+        guard caretInLine >= 0, caretInLine <= line.length else { return nil }
+
+        // The LAST `[[` before the caret on this line opens the candidate link.
+        let before = line.substring(to: caretInLine) as NSString
+        let open = before.range(of: "[[", options: .backwards)
+        guard open.location != NSNotFound else { return nil }
+        let queryStart = open.location + 2
+        let query = before.substring(from: queryStart)
+        // A `]` between the opener and the caret means the link closed — the trigger is dead. (A
+        // stray `[` kills it too: wiki targets exclude both brackets, and a later `[[` would have
+        // been found as the opener above.)
+        guard !query.contains("]"), !query.contains("[") else { return nil }
+
+        // A `]]` after the caret that closes THIS link (before any new `[[` opens) means the caret
+        // is inside an already-CLOSED `[[…]]` — editing it, not completing a new one.
+        let after = line.substring(from: caretInLine) as NSString
+        let close = after.range(of: "]]")
+        let reopen = after.range(of: "[[")
+        if close.location != NSNotFound, reopen.location == NSNotFound || close.location < reopen.location {
+            return nil
+        }
+
+        // Never inside an inline code span — code is literal, so `[[` in backticks is not a link.
+        // (Inline code can't span newlines, so scanning the caret's line is exact enough.)
+        for span in MarkdownInline.spans(in: line as String) where span.kind == .code {
+            let extent = span.markerRanges.reduce(span.contentRange) { NSUnionRange($0, $1) }
+            if NSLocationInRange(open.location, extent) { return nil }
+        }
+
+        return (query, NSRange(location: lineRange.location + queryStart, length: caretInLine - queryStart))
+    }
+
+    /// The edit that ACCEPTS a wiki completion: replace the partial query (`replaceRange` from
+    /// `wikiCompletionContext`) with the chosen `target` plus the closing `]]`, landing the caret
+    /// just past the `]]`. The opener `[[` is already in the text — it is not re-inserted.
+    public static func wikiCompletionAccept(target: String, replacing replaceRange: NSRange) -> TextEdit {
+        let replacement = target + "]]"
+        let caret = replaceRange.location + (replacement as NSString).length
+        return TextEdit(range: replaceRange, replacement: replacement,
+                        selectionAfter: NSRange(location: caret, length: 0))
+    }
+
     // MARK: - Inline wrap / toggle
 
     private static func wrap(_ marker: String, in ns: NSString, selection: NSRange) -> TextEdit {

@@ -26,13 +26,22 @@ public struct EditorView: NSViewRepresentable {
     /// editing ergonomics (it just places the caret, even inside a link), so activation requires the
     /// modifier. nil → links render styled but aren't clickable.
     public var onLinkActivate: ((MarkerLinkTarget) -> Void)?
+    /// Wiki-link COMPLETION provider: while the caret types inside an unclosed `[[…`, the editor
+    /// calls this with the partial query and pops the returned candidates in a caret-anchored,
+    /// keyboard-navigable list (Down/Up cycle, Return/Tab accept, Esc dismisses, clicking a row
+    /// accepts). The consumer ranks and caps the list (the editor shows it verbatim). Accepting
+    /// inserts `Target]]` through the undo-registered mutation seam. nil → the feature is OFF
+    /// (no controller is ever allocated; existing consumers unchanged).
+    public var wikiCompletions: ((String) -> [String])?
 
     public init(model: EditorModel, theme: MarkerTheme, highlighter: (any CodeTokenProviding)? = nil,
-                onLinkActivate: ((MarkerLinkTarget) -> Void)? = nil) {
+                onLinkActivate: ((MarkerLinkTarget) -> Void)? = nil,
+                wikiCompletions: ((String) -> [String])? = nil) {
         self.model = model
         self.theme = theme
         self.highlighter = highlighter
         self.onLinkActivate = onLinkActivate
+        self.wikiCompletions = wikiCompletions
     }
 
     var styler: EditorStyler { EditorStyler(theme: theme, highlighter: highlighter) }
@@ -97,6 +106,8 @@ public struct EditorView: NSViewRepresentable {
         // Click interception (checkbox toggles on plain click, Cmd+click link activation): the text
         // view asks the coordinator BEFORE default mouseDown handling; `true` consumes the click.
         context.coordinator.onLinkActivate = onLinkActivate
+        context.coordinator.wikiCompletions = wikiCompletions
+        context.coordinator.theme = theme
         textView.onMouseDown = { [weak coordinator = context.coordinator] index, commandHeld in
             coordinator?.handleMouseDown(at: index, commandHeld: commandHeld) ?? false
         }
@@ -109,6 +120,8 @@ public struct EditorView: NSViewRepresentable {
         let coordinator = context.coordinator
         coordinator.styler = styler   // keep keystroke restyles on the CURRENT theme/highlighter
         coordinator.onLinkActivate = onLinkActivate   // closures aren't comparable; just keep it fresh
+        coordinator.wikiCompletions = wikiCompletions
+        coordinator.theme = theme
         // Read-only lock (trial expired / license revoked): the text view stays SELECTABLE (read,
         // scroll, copy all live) but not EDITABLE, so typing/paste/delete are refused natively. Read
         // `model.isReadOnly` here so a lock flip re-invokes this method; set it BEFORE the restyle
@@ -192,10 +205,43 @@ public struct EditorView: NSViewRepresentable {
         /// The consumer's link-activation callback (Cmd+click on a link / wiki link). Kept on the
         /// coordinator (refreshed each `updateNSView`) so the text view's mouseDown seam reaches it.
         var onLinkActivate: ((MarkerLinkTarget) -> Void)?
+        /// The consumer's wiki-COMPLETION provider (nil → feature off). Refreshed each `updateNSView`
+        /// like `onLinkActivate`.
+        var wikiCompletions: ((String) -> [String])?
+        /// The live theme for the completion popup (refreshed each `updateNSView` so a consumer
+        /// theme change reaches it — same staleness rule as `styler`).
+        var theme: MarkerTheme
+        /// The caret-anchored completion popup. Allocated only on the FIRST live `[[` trigger, so a
+        /// consumer without a provider (or one who never types `[[`) never pays for it.
+        private var wikiCompletion: WikiCompletionController?
 
         init(model: EditorModel, styler: EditorStyler) {
             self.model = model
             self.styler = styler
+            self.theme = styler.theme
+        }
+
+        /// Recompute the wiki-completion session after a text change or caret move — the popup
+        /// opens/refines while the caret types inside an unclosed `[[`, and dies the moment the
+        /// caret leaves it. Active in BOTH Live and Source modes (completion is a typing aid, not
+        /// a rendering affordance); a read-only document never completes (it can't accept anyway).
+        func refreshWikiCompletion(_ textView: NSTextView) {
+            guard let wikiCompletions, !model.isReadOnly else { wikiCompletion?.hide(); return }
+            let controller: WikiCompletionController
+            if let wikiCompletion {
+                controller = wikiCompletion
+            } else {
+                // Cheap existence probe before the first allocation: only stand the controller up
+                // when a session could actually open.
+                guard EditorCommands.wikiCompletionContext(in: model.text, selection: model.selection,
+                                                           document: model.document) != nil else { return }
+                controller = WikiCompletionController()
+                controller.onAccept = { [weak self] target, range in
+                    self?.apply(EditorCommands.wikiCompletionAccept(target: target, replacing: range))
+                }
+                wikiCompletion = controller
+            }
+            controller.refresh(textView: textView, model: model, theme: theme, completions: wikiCompletions)
         }
 
         /// Caret point (window top-left space) cached on every caret move WHILE the text view is first
@@ -225,6 +271,7 @@ public struct EditorView: NSViewRepresentable {
                 codeWell.codeBlockRanges = EditorView.codeWellRanges(model)
                 codeWell.activeLineRange = EditorView.activeLineRange(model)
             }
+            refreshWikiCompletion(textView)
         }
 
         public func textViewDidChangeSelection(_ notification: Notification) {
@@ -277,6 +324,13 @@ public struct EditorView: NSViewRepresentable {
                     }
                 }
             }
+            refreshWikiCompletion(textView)
+        }
+
+        /// Focus left the editor (click into another field, window change) — the caret is gone, so
+        /// the caret-anchored completion popup goes with it.
+        public func textDidEndEditing(_ notification: Notification) {
+            wikiCompletion?.hide()
         }
 
         /// A character's line Y in text-view coordinates (top of its rendered text segment), or nil
@@ -345,9 +399,25 @@ public struct EditorView: NSViewRepresentable {
             return false
         }
 
-        /// Intercept Enter to continue a list/quote (or exit an empty item). Applied undo-registered via
-        /// the mutator; anything else falls through to the default editing behavior.
+        /// Intercept the wiki-completion keys WHILE the popup is visible (Down/Up cycle, Return/Tab
+        /// accept, Esc dismisses — invisible popup intercepts NOTHING), then Enter to continue a
+        /// list/quote (or exit an empty item). Applied undo-registered via the mutator; anything
+        /// else falls through to the default editing behavior.
         public func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if let wikiCompletion, wikiCompletion.isVisible {
+                switch commandSelector {
+                case #selector(NSResponder.moveDown(_:)):
+                    wikiCompletion.moveSelection(by: 1); return true
+                case #selector(NSResponder.moveUp(_:)):
+                    wikiCompletion.moveSelection(by: -1); return true
+                case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertTab(_:)):
+                    wikiCompletion.acceptSelected(); return true
+                case #selector(NSResponder.cancelOperation(_:)), #selector(NSTextView.complete(_:)):
+                    wikiCompletion.dismissByUser(); return true
+                default:
+                    break
+                }
+            }
             if commandSelector == #selector(NSResponder.insertNewline(_:)),
                !model.isReadOnly,
                let edit = EditorCommands.newlineContinuation(in: textView.string, selection: textView.selectedRange()) {
