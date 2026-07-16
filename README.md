@@ -19,9 +19,9 @@ reference implementation).
 
 | Product | Status | Contents |
 |---|---|---|
-| `Marker` | ✅ here | The pure engine + 127 tests |
-| `MarkerEditor` | planned (phase 2) | TextKit 2 gentle-syntax WYSIWYG editor, themed via a token protocol |
-| `MarkerHighlighting` | planned | tree-sitter code-fence highlighting (optional, keeps light consumers dependency-free) |
+| `Marker` | ✅ | The pure engine + 127 tests |
+| `MarkerEditor` | ✅ | TextKit 2 gentle-syntax WYSIWYG editor — themes via `MarkerTheme`, depends on the core only |
+| `MarkerHighlighting` | ✅ | tree-sitter code-fence highlighting, plugged into the editor via `CodeTokenProviding` (optional — light consumers skip the grammars) |
 
 ## Requirements
 
