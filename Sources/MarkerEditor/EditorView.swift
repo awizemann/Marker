@@ -33,15 +33,25 @@ public struct EditorView: NSViewRepresentable {
     /// inserts `Target]]` through the undo-registered mutation seam. nil → the feature is OFF
     /// (no controller is ever allocated; existing consumers unchanged).
     public var wikiCompletions: ((String) -> [String])?
+    /// Generalized FILE-drop seam: called with the NON-image file URLs of a drop (image drops keep
+    /// their own `EditorModel.onDropImages` path; a mixed drop splits — images there, the rest
+    /// here). Runs synchronously inside the drop operation, while the drop's sandbox grant is
+    /// live — a sandboxed consumer that needs the URLs later must mint security-scoped bookmarks
+    /// inside this call. Return the markdown to insert at the drop caret (undo-registered, replaces
+    /// any selection), or nil to decline — the drop then falls through to NSTextView's default
+    /// handling. nil seam (the default) leaves existing consumers byte-identical.
+    public var onDropFiles: (([URL]) -> String?)?
 
     public init(model: EditorModel, theme: MarkerTheme, highlighter: (any CodeTokenProviding)? = nil,
                 onLinkActivate: ((MarkerLinkTarget) -> Void)? = nil,
-                wikiCompletions: ((String) -> [String])? = nil) {
+                wikiCompletions: ((String) -> [String])? = nil,
+                onDropFiles: (([URL]) -> String?)? = nil) {
         self.model = model
         self.theme = theme
         self.highlighter = highlighter
         self.onLinkActivate = onLinkActivate
         self.wikiCompletions = wikiCompletions
+        self.onDropFiles = onDropFiles
     }
 
     var styler: EditorStyler { EditorStyler(theme: theme, highlighter: highlighter) }
@@ -107,9 +117,19 @@ public struct EditorView: NSViewRepresentable {
         // view asks the coordinator BEFORE default mouseDown handling; `true` consumes the click.
         context.coordinator.onLinkActivate = onLinkActivate
         context.coordinator.wikiCompletions = wikiCompletions
+        context.coordinator.onDropFiles = onDropFiles
         context.coordinator.theme = theme
         textView.onMouseDown = { [weak coordinator = context.coordinator] index, commandHeld in
             coordinator?.handleMouseDown(at: index, commandHeld: commandHeld) ?? false
+        }
+        // Generalized file-drop seam: the text view routes non-image file drops here only when the
+        // consumer wired one (nil keeps the hook nil → pre-seam behavior). The coordinator asks the
+        // consumer for markdown and inserts it at the drop caret through the undo-registered
+        // `apply(_:)` — the same mutation seam as ⌘K / checkbox toggles / wiki completions.
+        if onDropFiles != nil {
+            textView.onDropFiles = { [weak coordinator = context.coordinator] urls in
+                coordinator?.handleDroppedFiles(urls) ?? false
+            }
         }
         EditorScrollTrace.install(scrollView: scrollView)   // no-op unless TK_SCROLL_TRACE=1
         return scrollView
@@ -121,7 +141,16 @@ public struct EditorView: NSViewRepresentable {
         coordinator.styler = styler   // keep keystroke restyles on the CURRENT theme/highlighter
         coordinator.onLinkActivate = onLinkActivate   // closures aren't comparable; just keep it fresh
         coordinator.wikiCompletions = wikiCompletions
+        coordinator.onDropFiles = onDropFiles
         coordinator.theme = theme
+        // Keep the text view's drop hook in step with the consumer's seam: wired only while a
+        // consumer closure exists, so a nil seam keeps the text view's drag handling byte-identical
+        // to pre-seam behavior (draggingEntered/performDragOperation gate on the hook's presence).
+        if let codeWell = textView as? CodeWellTextView {
+            codeWell.onDropFiles = onDropFiles == nil ? nil : { [weak coordinator] urls in
+                coordinator?.handleDroppedFiles(urls) ?? false
+            }
+        }
         // Read-only lock (trial expired / license revoked): the text view stays SELECTABLE (read,
         // scroll, copy all live) but not EDITABLE, so typing/paste/delete are refused natively. Read
         // `model.isReadOnly` here so a lock flip re-invokes this method; set it BEFORE the restyle
@@ -208,6 +237,9 @@ public struct EditorView: NSViewRepresentable {
         /// The consumer's wiki-COMPLETION provider (nil → feature off). Refreshed each `updateNSView`
         /// like `onLinkActivate`.
         var wikiCompletions: ((String) -> [String])?
+        /// The consumer's file-drop seam (nil → feature off; drops fall through to the text view's
+        /// default handling). Refreshed each `updateNSView` like `onLinkActivate`.
+        var onDropFiles: (([URL]) -> String?)?
         /// The live theme for the completion popup (refreshed each `updateNSView` so a consumer
         /// theme change reaches it — same staleness rule as `styler`).
         var theme: MarkerTheme
@@ -397,6 +429,22 @@ public struct EditorView: NSViewRepresentable {
                 }
             }
             return false
+        }
+
+        /// NON-image file URLs dropped on the editor (the text view already collapsed the selection
+        /// to a caret at the drop point). Ask the consumer for markdown; insert it there through the
+        /// undo-registered `apply(_:)`. Returns `true` when the drop was consumed — `false` (no
+        /// consumer, read-only document, or the consumer declined with nil) lets the text view fall
+        /// through to its default drag handling. Called synchronously inside `performDragOperation`,
+        /// so the consumer sees the URLs while the drop's sandbox grant is still live.
+        func handleDroppedFiles(_ urls: [URL]) -> Bool {
+            guard let onDropFiles, !model.isReadOnly, let textView else { return false }
+            guard let markdown = onDropFiles(urls),
+                  let edit = EditorCommands.droppedMarkdownInsertion(markdown, in: textView.string,
+                                                                     selection: textView.selectedRange())
+            else { return false }
+            apply(edit)
+            return true
         }
 
         /// Intercept the wiki-completion keys WHILE the popup is visible (Down/Up cycle, Return/Tab

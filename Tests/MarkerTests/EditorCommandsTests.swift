@@ -459,4 +459,40 @@ struct EditorCommandsTests {
         #expect(EditorCommands.taskCheckboxToggle(in: "- [ ] t", blockRange: NSRange(location: 0, length: 99),
                                                   location: 3, selection: caret(0)) == nil)
     }
+
+    // MARK: Dropped-file markdown insertion (the onDropFiles seam)
+
+    @Test("dropped markdown inserts at a caret and lands the caret just past it")
+    func droppedInsertAtCaret() {
+        let edit = EditorCommands.droppedMarkdownInsertion("[[Report]]", in: "before after", selection: caret(7))
+        #expect(edit == TextEdit(range: caret(7), replacement: "[[Report]]",
+                                 selectionAfter: NSRange(location: 17, length: 0)))
+        // DISCRIMINATION: fails if the insertion shifts off the drop caret or the caret lands
+        // inside the inserted link (subsequent typing would corrupt it).
+    }
+
+    @Test("dropped markdown REPLACES a real selection, like paste")
+    func droppedInsertReplacesSelection() {
+        let edit = EditorCommands.droppedMarkdownInsertion("[[A]]\n[[B]]", in: "keep DELETE keep",
+                                                           selection: NSRange(location: 5, length: 6))
+        #expect(edit?.range == NSRange(location: 5, length: 6))
+        #expect(edit?.replacement == "[[A]]\n[[B]]")
+        // Caret after = selection start + inserted length (the NEW text's coordinates).
+        #expect(edit?.selectionAfter == NSRange(location: 5 + 11, length: 0))
+    }
+
+    @Test("dropped markdown caret math is UTF-16 (emoji-safe)")
+    func droppedInsertUTF16() {
+        let markdown = "[[📄 Scan]]"   // the emoji is 2 UTF-16 units
+        let edit = EditorCommands.droppedMarkdownInsertion(markdown, in: "x", selection: caret(1))
+        #expect(edit?.selectionAfter == NSRange(location: 1 + (markdown as NSString).length, length: 0))
+    }
+
+    @Test("empty markdown and a stale out-of-bounds selection both no-op")
+    func droppedInsertRejects() {
+        #expect(EditorCommands.droppedMarkdownInsertion("", in: "text", selection: caret(0)) == nil)
+        #expect(EditorCommands.droppedMarkdownInsertion("[[x]]", in: "hi", selection: caret(9)) == nil)
+        #expect(EditorCommands.droppedMarkdownInsertion("[[x]]", in: "hi",
+                                                        selection: NSRange(location: 1, length: 5)) == nil)
+    }
 }

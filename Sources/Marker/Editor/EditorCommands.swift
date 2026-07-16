@@ -249,6 +249,23 @@ public nonisolated enum EditorCommands {
                         selectionAfter: NSRange(location: caret, length: 0))
     }
 
+    // MARK: - Dropped-file markdown insertion
+
+    /// The edit that inserts consumer-produced `markdown` at the drop point (the file-drop seam,
+    /// `EditorView.onDropFiles`): replace `selection` — the drop handler collapses it to a caret at
+    /// the drop location, but a real selection is respected and replaced, like paste — with the
+    /// markdown verbatim, landing the caret just past the insertion. Returns nil when there's
+    /// nothing to insert or the selection doesn't fit `text` (a stale range must no-op, not crash).
+    public static func droppedMarkdownInsertion(_ markdown: String, in text: String,
+                                                selection: NSRange) -> TextEdit? {
+        guard !markdown.isEmpty else { return nil }
+        let ns = text as NSString
+        guard selection.location >= 0, selection.length >= 0, NSMaxRange(selection) <= ns.length else { return nil }
+        let caret = selection.location + (markdown as NSString).length
+        return TextEdit(range: selection, replacement: markdown,
+                        selectionAfter: NSRange(location: caret, length: 0))
+    }
+
     // MARK: - Inline wrap / toggle
 
     private static func wrap(_ marker: String, in ns: NSString, selection: NSRange) -> TextEdit {

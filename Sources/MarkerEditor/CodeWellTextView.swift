@@ -22,6 +22,15 @@ final class CodeWellTextView: NSTextView {
     /// Set by the host in `makeNSView`.
     var onDropImages: (([CapturedImageDrop]) -> Void)?
 
+    /// NON-image file URLs dropped onto the editor, called synchronously inside
+    /// `performDragOperation` (while the drop's sandbox grant is still live — a sandboxed consumer
+    /// that needs the URLs later must mint bookmarks inside this call, like the image path does).
+    /// Set by the host in `makeNSView`; returns `true` when the drop was consumed (the consumer
+    /// produced markdown that was inserted), `false` to fall through to NSTextView's default
+    /// handling. nil (the default) keeps the pre-seam behavior byte-identical: only image drops
+    /// are intercepted, everything else goes to `super`.
+    var onDropFiles: (([URL]) -> Bool)?
+
     /// Pre-mouseDown seam, set by the host in `makeNSView`: called with the clicked character index
     /// (insertion-point space) and whether ⌘ was held. Return `true` to CONSUME the click (checkbox
     /// toggle, Cmd+click link activation); `false` falls through to NSTextView's normal caret placement.
@@ -37,24 +46,51 @@ final class CodeWellTextView: NSTextView {
     }
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        imageURLs(from: sender).isEmpty ? super.draggingEntered(sender) : .copy
+        if !imageURLs(from: sender).isEmpty { return .copy }
+        // Only when the generalized seam is wired: accept non-image file drags too. With no
+        // consumer (TrapperKeeper today) this branch is dead and the behavior is exactly pre-seam.
+        if onDropFiles != nil, !fileURLs(from: sender).isEmpty { return .copy }
+        return super.draggingEntered(sender)
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        // Mint each dropped image's bookmark HERE, synchronously, while the drop's sandbox grant is
-        // guaranteed live — the async insert that follows cannot rely on that transient grant.
-        let drops: [CapturedImageDrop] = imageURLs(from: sender).compactMap { url in
+        // IMAGE drops keep their existing path, unchanged and FIRST (consumers that only wire
+        // `onDropImages` — TrapperKeeper — must behave byte-identically). Mint each dropped image's
+        // bookmark HERE, synchronously, while the drop's sandbox grant is guaranteed live — the
+        // async insert that follows cannot rely on that transient grant.
+        let images = imageURLs(from: sender)
+        let drops: [CapturedImageDrop] = images.compactMap { url in
             let holding = url.startAccessingSecurityScopedResource()
             defer { if holding { url.stopAccessingSecurityScopedResource() } }
             guard let blob = try? url.bookmarkData(options: .withSecurityScope,
                                                    includingResourceValuesForKeys: nil, relativeTo: nil) else { return nil }
             return CapturedImageDrop(url: url, bookmark: blob)
         }
-        guard !drops.isEmpty else { return super.performDragOperation(sender) }   // non-image / mint failed → default
-        // Place the caret nearest the drop point so the reference lands where dropped, then hand off.
-        setSelectedRange(NSRange(location: characterIndexForInsertion(at: convert(sender.draggingLocation, from: nil)), length: 0))
-        onDropImages?(drops)
-        return true
+        if !drops.isEmpty {
+            // Place the caret nearest the drop point so the reference lands where dropped, then hand off.
+            setSelectedRange(NSRange(location: characterIndexForInsertion(at: convert(sender.draggingLocation, from: nil)), length: 0))
+            onDropImages?(drops)
+            // MIXED drop (images + other files): the images take their path above; the REMAINING
+            // non-image URLs go to the seam, at the same drop caret. The image insert is async
+            // (consumer-side), the seam insert synchronous — so links land at the drop point first
+            // and image references follow after them, both where the user dropped.
+            if onDropFiles != nil {
+                let imageSet = Set(images)
+                let others = fileURLs(from: sender).filter { !imageSet.contains($0) }
+                if !others.isEmpty { _ = onDropFiles?(others) }
+            }
+            return true
+        }
+        // NON-image file drop → the generalized seam. Called synchronously (drop grant live); the
+        // consumer returning nil / the seam being unwired falls through to the default handling.
+        if onDropFiles != nil {
+            let files = fileURLs(from: sender)
+            if !files.isEmpty {
+                setSelectedRange(NSRange(location: characterIndexForInsertion(at: convert(sender.draggingLocation, from: nil)), length: 0))
+                if onDropFiles?(files) == true { return true }
+            }
+        }
+        return super.performDragOperation(sender)   // non-file / mint failed / consumer declined → default
     }
 
     /// The dropped file URLs that are images (by content type); [] when the drop isn't image files.
@@ -63,6 +99,12 @@ final class CodeWellTextView: NSTextView {
             .urlReadingFileURLsOnly: true,
             .urlReadingContentsConformToTypes: [UTType.image.identifier],
         ]
+        return (sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL]) ?? []
+    }
+
+    /// ALL dropped file URLs, any content type; [] when the drop carries no file URLs.
+    private func fileURLs(from sender: any NSDraggingInfo) -> [URL] {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
         return (sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL]) ?? []
     }
 
