@@ -40,6 +40,23 @@ final class CodeWellTextView: NSTextView {
     /// the pre-seam behavior byte-identical. Set by the host in `makeNSView`.
     var onDropText: ((String) -> Bool)?
 
+    /// FIRST-RESPONDER tracking, set by the host in `makeNSView`: reports keyboard focus entering/
+    /// leaving the editor (become/resignFirstResponder) so the model's `isFocused` stays truthful
+    /// and consumers can gate focus-sensitive commands (menu key equivalents) on real focus.
+    var onFocusChange: ((Bool) -> Void)?
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { onFocusChange?(true) }
+        return accepted
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { onFocusChange?(false) }
+        return resigned
+    }
+
     /// Pre-mouseDown seam, set by the host in `makeNSView`: called with the clicked character index
     /// (insertion-point space) and whether ⌘ was held. Return `true` to CONSUME the click (checkbox
     /// toggle, Cmd+click link activation); `false` falls through to NSTextView's normal caret placement.

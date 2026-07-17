@@ -87,4 +87,18 @@ struct EditorModelTests {
         model.insertImageReference(url: "a.png")   // default alt: the pre-0.5.0 empty cell, unchanged
         #expect(mutator.applied.last?.replacement == "![](a.png)\n")
     }
+
+    @Test("updateFocus tracks the host's first-responder reports (headless default: not focused)")
+    func focusTracking() {
+        let model = EditorModel(text: "hello")
+        #expect(model.isFocused == false)      // headless/tests: never focused until a host reports
+        model.updateFocus(true)                // the text view became first responder
+        #expect(model.isFocused)
+        model.updateFocus(true)                // repeated report — no flip (observation-churn guard)
+        #expect(model.isFocused)
+        model.updateFocus(false)               // focus left (title field, palette, another window)
+        #expect(model.isFocused == false)
+        // DISCRIMINATION: fails if isFocused ever defaults true or stops following the host — a
+        // consumer's menu key equivalents would fire into an unfocused editor again (t-58f80f60).
+    }
 }

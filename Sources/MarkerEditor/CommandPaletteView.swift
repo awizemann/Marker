@@ -109,7 +109,7 @@ public struct CommandPaletteView<Driver: CommandPaletteDriving>: View {
             .padding(.horizontal, 14).padding(.vertical, 9)
         }
         .background(theme.sheet.opacity(0.82))
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .paletteGlass(theme: theme)
         .shadow(color: theme.ink.opacity(0.45), radius: 30, x: 0, y: 26)
         .onAppear { searchFocused = true }
         .onKeyPress(.downArrow) { driver.moveCommandSelection(1); return .handled }
@@ -153,5 +153,23 @@ public struct CommandPaletteView<Driver: CommandPaletteDriving>: View {
             .foregroundStyle(theme.muted)
             .padding(.horizontal, 5).padding(.vertical, 1)
             .background(RoundedRectangle(cornerRadius: 5).fill(theme.ink.opacity(0.06)))
+    }
+}
+
+private extension View {
+    /// The palette's floating-sheet surface. Liquid Glass (`glassEffect`) on macOS 26+; on earlier
+    /// systems, a vibrant material + theme hairline in the same shape — mirroring TrapperKeeper's
+    /// original TKGlass degradation — so the palette still reads as a rounded glass panel at the
+    /// package's real platform floor.
+    @ViewBuilder
+    func paletteGlass(theme: MarkerTheme) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 15, style: .continuous)
+        if #available(macOS 26.0, *) {
+            self.glassEffect(.regular, in: shape)
+        } else {
+            self.background(.ultraThinMaterial, in: shape)
+                .clipShape(shape)
+                .overlay(shape.strokeBorder(theme.line, lineWidth: 1))
+        }
     }
 }

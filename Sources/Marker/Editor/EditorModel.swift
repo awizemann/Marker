@@ -73,6 +73,13 @@ public final class EditorModel {
     /// instead of churning observation on every keystroke.
     public private(set) var hasUnsavedChanges = false
 
+    /// Whether the hosted text view is FIRST RESPONDER — keyboard focus is in the editor surface
+    /// itself, not merely "an editor is on screen" (false while focus sits in a title field, a
+    /// palette's search field, or any other control). Consumers gate focus-sensitive affordances
+    /// (menu key equivalents like ⌘B) on this so shortcuts can't fire into a document the user
+    /// isn't typing in. Updated by the NSTextView host via `updateFocus`; always false headless.
+    public private(set) var isFocused = false
+
     /// When true, the document is READ-ONLY: typing, ⌘K mutations, and image inserts are all refused
     /// (the file stays openable/scrollable/copyable). Driven by the app from `LicenseManager.status`
     /// after the trial expires or a license is revoked (the hard pay-to-own lock). The editor doesn't
@@ -138,6 +145,12 @@ public final class EditorModel {
     public func updateSelection(_ newSelection: NSRange) {
         selection = newSelection
         recomputeActiveBlock()
+    }
+
+    /// The host reports a first-responder change (the text view's become/resignFirstResponder).
+    /// Guarded like `setDirty` so repeated reports don't churn observation.
+    public func updateFocus(_ focused: Bool) {
+        if isFocused != focused { isFocused = focused }
     }
 
     /// Adopt the resolved image bytes for the open doc (keyed by raw `![](path)` destination). Called by

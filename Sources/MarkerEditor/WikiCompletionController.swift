@@ -30,11 +30,11 @@ final class WikiCompletionController {
 
     var isVisible: Bool { panel?.isVisible ?? false }
 
-    /// `isolated deinit` (the class is @MainActor): tear the panel down if the controller dies while
-    /// showing — `addChildWindow` retains the child, so an un-detached panel would outlive us.
-    isolated deinit {
-        hide()
-    }
+    // NO deinit teardown: `isolated deinit` (the only way a @MainActor class can call `hide()` from
+    // its deinit) requires the macOS 15.4+ runtime, above the package floor. The panel is a retained
+    // CHILD WINDOW while showing (`addChildWindow` retains it), so teardown is EXPLICIT instead:
+    // `EditorView.dismantleNSView` → `Coordinator.teardown()` → `hide()` detaches it when SwiftUI
+    // removes the editor; `textDidEndEditing` already hides it on any focus loss before that.
 
     /// Recompute the session for the current text/caret and show, refresh, or hide accordingly.
     /// Called on every text change AND caret move — the trigger dies the moment the caret leaves

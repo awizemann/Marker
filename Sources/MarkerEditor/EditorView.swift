@@ -119,6 +119,9 @@ public struct EditorView: NSViewRepresentable {
         textView.registerForDraggedTypes([.fileURL])
         let editorModel = model
         textView.onDropImages = { [weak editorModel] drops in editorModel?.onDropImages?(drops) }
+        // First-responder tracking → `EditorModel.isFocused`, so consumers can gate menu key
+        // equivalents on the editor actually holding keyboard focus (not just being on screen).
+        textView.onFocusChange = { [weak editorModel] focused in editorModel?.updateFocus(focused) }
         // Wire the ⌘K mutation seam: the coordinator is the only thing that can apply an undo-registered
         // edit + read the caret rect. The model holds it weakly (see EditorTextMutating).
         model.mutator = context.coordinator
@@ -236,6 +239,16 @@ public struct EditorView: NSViewRepresentable {
 
     public func makeCoordinator() -> Coordinator {
         Coordinator(model: model, styler: EditorStyler(theme: theme, highlighter: highlighter))
+    }
+
+    /// SwiftUI is removing the editor: tear down the coordinator's window-level attachments
+    /// explicitly (the wiki-completion panel is a retained CHILD WINDOW — `addChildWindow` retains
+    /// it, so one left attached would outlive the view), and report focus lost so a consumer's
+    /// focus-gated commands can't keep targeting a dead editor. This explicit hook replaces the
+    /// controller's former `isolated deinit` (a macOS 15.4+ runtime feature — see the platform
+    /// floor note in Package.swift).
+    public static func dismantleNSView(_ nsView: NSScrollView, coordinator: Coordinator) {
+        coordinator.teardown()
     }
 
     @MainActor
@@ -387,6 +400,13 @@ public struct EditorView: NSViewRepresentable {
         /// the caret-anchored completion popup goes with it.
         public func textDidEndEditing(_ notification: Notification) {
             wikiCompletion?.hide()
+        }
+
+        /// Explicit end-of-life pass, called from `EditorView.dismantleNSView`: detach the
+        /// completion panel from its parent window and clear the model's focus flag.
+        func teardown() {
+            wikiCompletion?.hide()
+            model.updateFocus(false)
         }
 
         /// A character's line Y in text-view coordinates (top of its rendered text segment), or nil

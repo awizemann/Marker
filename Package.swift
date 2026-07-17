@@ -28,7 +28,14 @@ let markerSwiftSettings: [SwiftSetting] = [
 
 let package = Package(
     name: "Marker",
-    platforms: [.macOS("26.0")],
+    // The REAL platform floor, not the birthplace's macOS 26: the lowest that compiles and tests
+    // green. Observation/@Observable + @Bindable (EditorModel and every themed component) and
+    // SwiftUI `onKeyPress` (CommandPaletteView's arrow/return/escape handling) put it at 14.
+    // The two former macOS-26-isms are handled per-site: `glassEffect` is availability-gated in
+    // CommandPaletteView (material + hairline below 26), and WikiCompletionController's
+    // `isolated deinit` (a macOS 15.4+ runtime feature) became explicit teardown via
+    // `EditorView.dismantleNSView`.
+    platforms: [.macOS("14.0")],
     products: [
         .library(name: "Marker", targets: ["Marker"]),
         .library(name: "MarkerEditor", targets: ["MarkerEditor"]),
