@@ -112,9 +112,20 @@ public final class CommandPaletteModel: CommandPaletteDriving {
     /// that owns the editor; the editor never references the palette back (no cycle).
     private let editor: EditorModel
 
-    public init(editor: EditorModel, fallbackCaret: CGPoint = CGPoint(x: 470, y: 320)) {
+    /// The toolsets this palette offers (defaults = the full shared catalog). Consumers whose
+    /// driver can't service a tool (e.g. the side-effect Insert tools — addImage/addWebImage need
+    /// an app-side picker the turnkey model doesn't have) pass a filtered set so the palette
+    /// never lists a row that would silently no-op.
+    private let cursorTools: [EditorTool]
+    private let selectionTools: [EditorTool]
+
+    public init(editor: EditorModel, fallbackCaret: CGPoint = CGPoint(x: 470, y: 320),
+                cursorTools: [EditorTool] = EditorTool.cursor,
+                selectionTools: [EditorTool] = EditorTool.selection) {
         self.editor = editor
         self.fallbackCaret = fallbackCaret
+        self.cursorTools = cursorTools
+        self.selectionTools = selectionTools
     }
 
     /// Whether there's a live text selection (the palette flips to the selection toolset).
@@ -122,7 +133,7 @@ public final class CommandPaletteModel: CommandPaletteDriving {
 
     /// The toolset for the current mode (caret vs selection).
     public var activeTools: [EditorTool] {
-        commandSelectionActive ? EditorTool.selection : EditorTool.cursor
+        commandSelectionActive ? selectionTools : cursorTools
     }
 
     /// The tools matching the query (all of `activeTools` when the query is empty).
