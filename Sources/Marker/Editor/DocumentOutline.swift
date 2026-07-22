@@ -33,7 +33,7 @@ public nonisolated struct OutlineHeading: Sendable, Equatable, Identifiable {
     }
 }
 
-public enum DocumentOutline {
+public nonisolated enum DocumentOutline {
 
     /// Every heading block, in source order, as outline entries.
     public static func headings(of document: MarkdownDocument) -> [OutlineHeading] {

@@ -12,7 +12,7 @@
 
 import Foundation
 
-public enum MarkdownCodeLanguage {
+public nonisolated enum MarkdownCodeLanguage {
 
     /// A canonical language id (matching `CodeHighlighter`) for `code`, or nil when nothing is a
     /// confident match. Order matters: the most distinctive shapes (data/markup) are ruled in first,

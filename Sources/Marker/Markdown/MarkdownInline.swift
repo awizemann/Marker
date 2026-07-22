@@ -42,7 +42,7 @@ public nonisolated struct InlineSpan: Sendable, Equatable {
     }
 }
 
-public enum MarkdownInline {
+public nonisolated enum MarkdownInline {
 
     private struct Pattern { let kind: InlineKind; let regex: NSRegularExpression; let contentGroup: Int; let urlGroup: Int? }
 

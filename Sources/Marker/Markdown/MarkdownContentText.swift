@@ -15,7 +15,7 @@
 
 import Foundation
 
-public extension MarkdownBlock {
+public nonisolated extension MarkdownBlock {
 
     /// The block's display text with block-level markers stripped and the trailing line
     /// terminator removed. What's stripped per kind:

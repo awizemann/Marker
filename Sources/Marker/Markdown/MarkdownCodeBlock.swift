@@ -10,7 +10,7 @@
 
 import Foundation
 
-public enum MarkdownCodeBlock {
+public nonisolated enum MarkdownCodeBlock {
 
     /// The code region WITHIN a fenced block's verbatim text, as a block-relative UTF-16 `NSRange`:
     /// from the end of the opening fence line to the start of the closing fence line (or the block's

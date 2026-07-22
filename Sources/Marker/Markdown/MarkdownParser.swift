@@ -13,7 +13,7 @@
 
 import Foundation
 
-public enum MarkdownParser {
+public nonisolated enum MarkdownParser {
 
     public static func parse(_ source: String) -> MarkdownDocument {
         let ns = source as NSString
