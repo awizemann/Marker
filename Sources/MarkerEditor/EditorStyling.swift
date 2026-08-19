@@ -54,7 +54,8 @@ struct EditorStyler {
         }
 
         for block in model.document.blocks where block.range.length > 0 && NSMaxRange(block.range) <= storage.length {
-            render(block, hideMarkers: model.hideMarkers, indentHeaders: model.indentHeaders, in: storage)
+            render(block, hideMarkers: model.hideMarkers, indentHeaders: model.indentHeaders,
+                   editable: !model.isReadOnly, in: storage)
         }
         // NOTE: the current-line tint is NOT a storage attribute — CodeWellTextView draws it as an
         // overlay (see `activeLineRange`). Keeping it out of the storage means a caret move never edits
@@ -84,16 +85,18 @@ struct EditorStyler {
         storage.beginEditing()
         defer { storage.endEditing() }
         for i in changed where i >= 0 && i < new.count {
-            renderReset(new[i], hideMarkers: model.hideMarkers, indentHeaders: model.indentHeaders, in: storage)
+            renderReset(new[i], hideMarkers: model.hideMarkers, indentHeaders: model.indentHeaders,
+                        editable: !model.isReadOnly, in: storage)
         }
     }
 
     /// Reset one block's range to the base attributes and re-render it (so a code block's well and any
     /// markers come back cleanly) — reproducing exactly what a full pass would paint for that block.
-    private func renderReset(_ block: MarkdownBlock, hideMarkers: Bool, indentHeaders: Bool, in storage: NSTextStorage) {
+    private func renderReset(_ block: MarkdownBlock, hideMarkers: Bool, indentHeaders: Bool,
+                             editable: Bool, in storage: NSTextStorage) {
         guard block.range.length > 0, NSMaxRange(block.range) <= storage.length else { return }
         storage.setAttributes(baseAttributes(), range: block.range)
-        render(block, hideMarkers: hideMarkers, indentHeaders: indentHeaders, in: storage)
+        render(block, hideMarkers: hideMarkers, indentHeaders: indentHeaders, editable: editable, in: storage)
     }
 
     // MARK: Caret move — table grid↔raw flip only
@@ -126,7 +129,8 @@ struct EditorStyler {
         storage.beginEditing()
         defer { storage.endEditing() }
         for table in tables {
-            renderReset(table, hideMarkers: model.hideMarkers, indentHeaders: model.indentHeaders, in: storage)
+            renderReset(table, hideMarkers: model.hideMarkers, indentHeaders: model.indentHeaders,
+                        editable: !model.isReadOnly, in: storage)
         }
     }
 
@@ -150,7 +154,8 @@ struct EditorStyler {
 
     // MARK: Per-block rendering (identical whether active or not)
 
-    private func render(_ block: MarkdownBlock, hideMarkers: Bool, indentHeaders: Bool, in storage: NSTextStorage) {
+    private func render(_ block: MarkdownBlock, hideMarkers: Bool, indentHeaders: Bool,
+                        editable: Bool = true, in storage: NSTextStorage) {
         let range = block.range
         switch block.kind {
         case .heading(let level):
@@ -181,7 +186,7 @@ struct EditorStyler {
         case .taskItem(let checked):
             storage.addAttribute(.paragraphStyle, value: listParagraph(depth: block.indent), range: range)
             storage.addAttribute(.font, value: prose(17), range: range)
-            styleTask(block, checked: checked, in: storage)
+            styleTask(block, checked: checked, hideCell: hideMarkers && editable, in: storage)
 
         case .blockquote:
             storage.addAttribute(.paragraphStyle, value: quoteParagraph(), range: range)
@@ -190,6 +195,7 @@ struct EditorStyler {
             for marker in lineLeadingMarkers("> ", in: block) { dimMarker(marker, hidden: hideMarkers, in: storage) }
 
         case .codeBlock(let language):
+            applyCodeParagraphSpacing(block, in: storage)   // outer air above/below the well only
             storage.addAttribute(.font, value: mono(13.5), range: range)
             storage.addAttribute(.foregroundColor, value: NSColor(theme.inkSoft), range: range)  // neutral base; tokens add color
             // The grey well is drawn as a rounded, bordered BOX behind the text by CodeWellTextView
@@ -257,9 +263,20 @@ struct EditorStyler {
         }
     }
 
-    private func styleTask(_ block: MarkdownBlock, checked: Bool, in storage: NSTextStorage) {
+    private func styleTask(_ block: MarkdownBlock, checked: Bool, hideCell: Bool, in storage: NSTextStorage) {
         let prefixLen = leadingMarkerLength(block)
         colorMarker(prefixLen, in: block, color: checked ? theme.primary : theme.muted, in: storage)
+        // In hide-markers mode the `[ ]`/`[x]` CELL goes invisible (clear fg, font untouched so its
+        // width — and therefore the click target — is unchanged) and CodeWellTextView paints a real
+        // checkbox over it. The `- ` bullet stays visible/colored: it's structural, like any list
+        // marker. With markers shown, the literal text stays exactly as before. Under the read-only
+        // lock the cell stays VISIBLE: `EditorView.taskCheckboxes` draws no checkbox there (the click
+        // handler wouldn't toggle it), so hiding the text would leave a blank gap instead.
+        if hideCell,
+           let local = EditorCommands.taskCheckboxCell(in: block.text,
+                                                       blockRange: NSRange(location: 0, length: (block.text as NSString).length))?.cell {
+            dimMarker(NSRange(location: block.range.location + local.location, length: local.length), hidden: true, in: storage)
+        }
         if checked {
             let bodyStart = block.range.location + prefixLen
             let bodyLen = block.range.length - prefixLen
@@ -535,4 +552,56 @@ struct EditorStyler {
         p.firstLineHeadIndent = 18
         return p
     }
+
+    /// Air AROUND a fenced code block's well: `paragraphSpacingBefore` on the block's FIRST line only
+    /// and `paragraphSpacing` on its LAST line only, so the prose above/below stops sitting on the
+    /// box while the inner code lines keep their natural, tight leading (spacing on every line would
+    /// balloon the block). CodeWellTextView subtracts exactly these amounts back out of the layout
+    /// fragment union, so the drawn box hugs the glyphs instead of swallowing the new air.
+    private func applyCodeParagraphSpacing(_ block: MarkdownBlock, in storage: NSTextStorage) {
+        let lines = lineRanges(in: block)
+        guard let first = lines.first, let last = lines.last else { return }
+        for line in lines {
+            let style = codeParagraph(spacingBefore: line == first ? CodeWellMetrics.spacingBefore : 0,
+                                      spacingAfter: line == last ? CodeWellMetrics.spacingAfter : 0)
+            guard NSMaxRange(line) <= storage.length else { continue }
+            storage.addAttribute(.paragraphStyle, value: style, range: line)
+        }
+    }
+
+    private func codeParagraph(spacingBefore: CGFloat, spacingAfter: CGFloat) -> NSParagraphStyle {
+        let p = NSMutableParagraphStyle()
+        p.paragraphSpacingBefore = spacingBefore
+        p.paragraphSpacing = spacingAfter
+        return p
+    }
+
+    /// The block's lines as ABSOLUTE storage ranges (each including its trailing newline).
+    private func lineRanges(in block: MarkdownBlock) -> [NSRange] {
+        var result: [NSRange] = []
+        let ns = block.text as NSString
+        var lineStart = 0
+        while lineStart < ns.length {
+            let lineRange = ns.lineRange(for: NSRange(location: lineStart, length: 0))
+            result.append(NSRange(location: block.range.location + lineRange.location, length: lineRange.length))
+            lineStart = NSMaxRange(lineRange)
+            if lineRange.length == 0 { break }
+        }
+        return result
+    }
+}
+
+/// Geometry shared by the code block's PARAGRAPH SPACING (EditorStyler, in the text storage) and the
+/// WELL the box is drawn from (CodeWellTextView). They must agree: TextKit 2 folds
+/// `paragraphSpacingBefore`/`paragraphSpacing` INTO `layoutFragmentFrame`, so the drawing side has to
+/// subtract the same numbers back out or the box would swallow the outer air it is meant to leave.
+nonisolated enum CodeWellMetrics {
+    /// Air above the block's first line (outside the box).
+    static let spacingBefore: CGFloat = 10
+    /// Air below the block's last line (outside the box).
+    static let spacingAfter: CGFloat = 10
+    /// Air INSIDE the box, above the first glyph line and below the last.
+    static let interiorPadding: CGFloat = 6
+    /// How far the box breathes past the text column on each side.
+    static let horizontalInset: CGFloat = 10
 }

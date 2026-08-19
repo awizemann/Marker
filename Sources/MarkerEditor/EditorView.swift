@@ -210,6 +210,7 @@ public struct EditorView: NSViewRepresentable {
         }
         if let codeWell = textView as? CodeWellTextView {
             codeWell.codeBlockRanges = Self.codeWellRanges(model)
+            codeWell.taskCheckboxes = Self.taskCheckboxes(model)
             codeWell.activeLineRange = Self.activeLineRange(model)
         }
     }
@@ -226,6 +227,19 @@ public struct EditorView: NSViewRepresentable {
         return model.document.blocks.compactMap { block in
             if case .codeBlock = block.kind { return block.range }
             return nil
+        }
+    }
+
+    /// The task-item checkboxes to paint — ONLY in Live + hide-markers mode (Source mode and
+    /// marker-visible mode show the literal `- [x]` text, so nothing is drawn over it), and only
+    /// when the document is editable: the click handler refuses to toggle under the read-only lock,
+    /// so a checkbox drawn there would be a control that silently does nothing.
+    static func taskCheckboxes(_ model: EditorModel) -> [CodeWellTextView.TaskCheckbox] {
+        guard !model.isSourceMode, model.hideMarkers, !model.isReadOnly else { return [] }
+        return model.document.blocks.compactMap { block in
+            guard case .taskItem = block.kind,
+                  let cell = EditorCommands.taskCheckboxCell(in: model.text, blockRange: block.range) else { return nil }
+            return CodeWellTextView.TaskCheckbox(cell: cell.cell, checked: cell.checked)
         }
     }
 
@@ -338,6 +352,7 @@ public struct EditorView: NSViewRepresentable {
             }
             if let codeWell = textView as? CodeWellTextView {
                 codeWell.codeBlockRanges = EditorView.codeWellRanges(model)
+                codeWell.taskCheckboxes = EditorView.taskCheckboxes(model)
                 codeWell.activeLineRange = EditorView.activeLineRange(model)
             }
             refreshWikiCompletion(textView)

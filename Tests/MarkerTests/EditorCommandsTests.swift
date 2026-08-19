@@ -451,6 +451,43 @@ struct EditorCommandsTests {
         #expect(EditorCommands.taskCheckboxToggle(in: text, blockRange: block, location: 12, selection: caret(0)) == nil)
     }
 
+    // MARK: Task checkbox CELL (what the renderer paints over)
+
+    @Test("the checkbox cell is the 3 chars `[`,state,`]`, with the checked state")
+    func checkboxCell() {
+        let plain = EditorCommands.taskCheckboxCell(in: "- [ ] buy milk", blockRange: NSRange(location: 0, length: 14))
+        #expect(plain?.cell == NSRange(location: 2, length: 3))
+        #expect(plain?.checked == false)
+        let done = EditorCommands.taskCheckboxCell(in: "- [x] buy milk", blockRange: NSRange(location: 0, length: 14))
+        #expect(done?.cell == NSRange(location: 2, length: 3))
+        #expect(done?.checked == true)
+        #expect(EditorCommands.taskCheckboxCell(in: "- [X] t", blockRange: NSRange(location: 0, length: 7))?.checked == true)
+        // Indent and `*`/`+` bullets shift the cell; a non-task / out-of-bounds block yields nil.
+        #expect(EditorCommands.taskCheckboxCell(in: "  - [ ] nested", blockRange: NSRange(location: 0, length: 14))?.cell
+                == NSRange(location: 4, length: 3))
+        #expect(EditorCommands.taskCheckboxCell(in: "* [ ] star", blockRange: NSRange(location: 0, length: 10))?.cell
+                == NSRange(location: 2, length: 3))
+        #expect(EditorCommands.taskCheckboxCell(in: "- plain", blockRange: NSRange(location: 0, length: 7)) == nil)
+        #expect(EditorCommands.taskCheckboxCell(in: "- [ ] t", blockRange: NSRange(location: 0, length: 99)) == nil)
+    }
+
+    @Test("the cell matches the click target the toggle accepts, mid-document")
+    func checkboxCellAgreesWithToggle() {
+        let text = "para\n- [ ] task\nafter"
+        let block = NSRange(location: 5, length: 11)
+        guard let cell = EditorCommands.taskCheckboxCell(in: text, blockRange: block) else {
+            #expect(Bool(false), "expected a cell"); return
+        }
+        #expect(cell.cell == NSRange(location: 7, length: 3))
+        // Every index within the cell (and the insertion point just past `]`) toggles; one before doesn't.
+        for i in cell.cell.location...NSMaxRange(cell.cell) {
+            #expect(EditorCommands.taskCheckboxToggle(in: text, blockRange: block, location: i, selection: caret(0)) != nil)
+        }
+        #expect(EditorCommands.taskCheckboxToggle(in: text, blockRange: block,
+                                                  location: cell.cell.location - 1, selection: caret(0)) == nil)
+        // DISCRIMINATION: fails if the painted box and the clickable cells ever drift apart.
+    }
+
     // MARK: Safety
 
     @Test("an out-of-bounds selection is rejected, not crashed")

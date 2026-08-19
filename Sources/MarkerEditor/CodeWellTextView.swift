@@ -164,11 +164,29 @@ final class CodeWellTextView: NSTextView {
         }
     }
 
+    /// A task item's `[ ]`/`[x]` cell: the 3-character span (whose glyphs styling paints CLEAR in
+    /// hide-markers mode) and its checked state. The checkbox symbol is drawn over that span.
+    struct TaskCheckbox: Equatable {
+        var cell: NSRange
+        var checked: Bool
+    }
+
+    /// The task checkboxes to paint, in Live + hide-markers mode only (empty otherwise — Source mode
+    /// and marker-visible mode show the literal `- [x]` text). Set by the coordinator after each
+    /// parse/restyle, exactly like `codeBlockRanges`.
+    var taskCheckboxes: [TaskCheckbox] = [] {
+        didSet {
+            guard taskCheckboxes != oldValue else { return }
+            needsDisplay = true
+        }
+    }
+
     // MARK: Drawing (the boxed well, behind the text)
 
     override func draw(_ dirtyRect: NSRect) {
         drawCodeWells()      // behind the text…
         drawActiveLine()     // …the current-line tint over the well but behind glyphs…
+        drawTaskCheckboxes() // …the checkbox symbols above the tint (the cell's own glyphs are clear)…
         super.draw(dirtyRect) // …then the glyphs (and selection/caret) on top
     }
 
@@ -179,10 +197,77 @@ final class CodeWellTextView: NSTextView {
               let layoutManager = textLayoutManager,
               let rect = fragmentUnion(for: range, in: layoutManager) else { return }
         let origin = textContainerOrigin
-        let box = CGRect(x: rect.minX + origin.x, y: rect.minY + origin.y, width: rect.width, height: rect.height)
+        // A code block's LAYOUT fragment union carries the well's outer paragraph spacing — measure
+        // the tint off the line fragments instead, so it lands on the well's glyph area rather than
+        // bleeding into the gap above/below. Non-code blocks keep the plain fragment union.
+        let vertical = codeBlockRanges.contains(range)
+            ? (CodeWellGeometry.wellBox(for: range, in: layoutManager) ?? rect)
+            : rect
+        let box = CGRect(x: rect.minX + origin.x, y: vertical.minY + origin.y, width: rect.width, height: vertical.height)
         // Soft current-line indicator (== EditorStyler's former `currentLineTint`).
         NSColor(theme.activeLineTint).setFill()
         NSBezierPath(rect: box).fill()
+    }
+
+    /// Paint an SF Symbol checkbox over each task item's `[ ]`/`[x]` cell. The cell characters stay in
+    /// storage at full width (styling only paints them clear), so the symbol lands exactly on the click
+    /// target `EditorCommands.taskCheckboxToggle` uses — bytes and caret offsets are untouched.
+    /// Only already-laid-out cells draw (`segmentRect` enumerates existing layout only): no forced
+    /// full-document layout. Cells outside the viewport are culled before any symbol work.
+    private func drawTaskCheckboxes() {
+        guard !taskCheckboxes.isEmpty, let layoutManager = textLayoutManager else { return }
+        let origin = textContainerOrigin
+        // The viewport in CONTAINER coordinates — `segmentRect` returns container-space rects.
+        let viewport = visibleRect.offsetBy(dx: -origin.x, dy: -origin.y)
+        for box in taskCheckboxes {
+            guard box.cell.length > 0,
+                  let cell = segmentRect(for: box.cell, in: layoutManager),
+                  cell.intersects(viewport) else { continue }
+            // Center on the CELL's own segment rect (its line), not the paragraph's fragment union —
+            // a wrapped task item spans several lines and the checkbox belongs on the first.
+            let side = min(Self.checkboxPointSize, max(cell.height - 2, 4))
+            let rect = CGRect(x: cell.midX + origin.x - side / 2,
+                              y: cell.midY + origin.y - side / 2,
+                              width: side, height: side)
+            let color = NSColor(box.checked ? theme.primary : theme.muted)
+            guard let image = Self.checkboxImage(checked: box.checked, color: color, side: side) else { continue }
+            image.draw(in: rect)
+        }
+    }
+
+    /// The typographic segment rect for `nsRange` (container coordinates) — the cell's horizontal
+    /// extent, which the line-fragment union alone can't give. Enumerates EXISTING layout only (no
+    /// `.ensuresLayout`), so a cell that isn't laid out yet simply returns nil and draws nothing.
+    private func segmentRect(for nsRange: NSRange, in layoutManager: NSTextLayoutManager) -> CGRect? {
+        guard let textRange = CodeWellGeometry.textRange(for: nsRange, in: layoutManager) else { return nil }
+        var union = CGRect.null
+        layoutManager.enumerateTextSegments(in: textRange, type: .standard, options: []) { _, frame, _, _ in
+            union = union.union(frame)
+            return true
+        }
+        return union.isNull ? nil : union
+    }
+
+    /// ~the body font's cap area — the checkbox reads as a control, not a glyph.
+    private static let checkboxPointSize: CGFloat = 14
+
+    /// A palette-tinted SF Symbol for the cell. Cached per (checked, color, size) so a scroll doesn't
+    /// re-render symbol images on every frame.
+    private static var checkboxImageCache: [String: NSImage] = [:]
+
+    private static func checkboxImage(checked: Bool, color: NSColor, side: CGFloat) -> NSImage? {
+        let key = "\(checked)|\(color.description)|\(Int(side.rounded()))"
+        if let cached = checkboxImageCache[key] { return cached }
+        let name = checked ? "checkmark.square.fill" : "square"
+        guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: checked ? "Checked" : "Unchecked") else { return nil }
+        let config = NSImage.SymbolConfiguration(pointSize: side, weight: .regular)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+        let image = symbol.withSymbolConfiguration(config) ?? symbol
+        // The system symbol arrives as a TEMPLATE image, which `draw(in:)` would repaint with the
+        // current fill color and throw the palette tint away. Opt out so the tint survives.
+        image.isTemplate = false
+        checkboxImageCache[key] = image
+        return image
     }
 
     private func drawCodeWells() {
@@ -203,14 +288,14 @@ final class CodeWellTextView: NSTextView {
         let padding = container.lineFragmentPadding
         let column = container.size.width - 2 * padding
         guard column > 0 else { return [] }
-        let hInset: CGFloat = 8                            // box breathes past the text on each side
+        let hInset = CodeWellMetrics.horizontalInset       // box breathes past the text on each side
         let left = origin.x + padding - hInset
         let width = column + 2 * hInset
 
         var result: [(NSRange, CGRect)] = []
         for range in codeBlockRanges {
-            guard let rect = fragmentUnion(for: range, in: layoutManager) else { continue }
-            result.append((range, NSRect(x: left, y: rect.minY + origin.y - 4, width: width, height: rect.height + 8)))
+            guard let box = CodeWellGeometry.wellBox(for: range, in: layoutManager) else { continue }
+            result.append((range, NSRect(x: left, y: box.minY + origin.y, width: width, height: box.height)))
         }
         return result
     }
@@ -219,10 +304,7 @@ final class CodeWellTextView: NSTextView {
     /// range doesn't resolve / isn't laid out. No `.ensuresLayout`: we only decorate already-laid-out
     /// (≈ visible) content, so we never force full-document layout on every draw or scroll.
     private func fragmentUnion(for nsRange: NSRange, in layoutManager: NSTextLayoutManager) -> CGRect? {
-        guard let content = layoutManager.textContentManager,
-              let start = content.location(content.documentRange.location, offsetBy: nsRange.location),
-              let end = content.location(start, offsetBy: nsRange.length),
-              let textRange = NSTextRange(location: start, end: end) else { return nil }
+        guard let textRange = CodeWellGeometry.textRange(for: nsRange, in: layoutManager) else { return nil }
         var union = CGRect.null
         layoutManager.enumerateTextLayoutFragments(from: textRange.location, options: []) { fragment in
             guard fragment.rangeInElement.location.compare(textRange.endLocation) == .orderedAscending else { return false }
@@ -358,4 +440,54 @@ final class CodeWellTextView: NSTextView {
 
     private static let copyIcon = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "Copy code")
     private static let copiedIcon = NSImage(systemSymbolName: "checkmark", accessibilityDescription: "Copied")
+}
+
+/// The code well's DRAWN geometry, kept out of the view so it can be exercised against a bare
+/// TextKit 2 stack in tests.
+///
+/// The box is measured from the block's **text line fragments** — never from `layoutFragmentFrame`,
+/// which folds in the `paragraphSpacingBefore`/`paragraphSpacing` `EditorStyler` puts on the block's
+/// outer lines. Subtracting those numbers back out looks equivalent but is not: TextKit 2 does NOT
+/// apply `paragraphSpacing` to a final paragraph that has no trailing newline, so a code block at
+/// EOF would have had 10pt subtracted that was never added — cutting the box into the closing fence
+/// — and an unterminated fence at EOF would have produced an overly tall frame. The line fragments
+/// carry only the glyph lines, so the union is exact in every case; `interiorPadding` is the only
+/// air added back.
+nonisolated enum CodeWellGeometry {
+
+    /// The drawn box for a laid-out line-fragment union: the glyph area plus interior padding above
+    /// and below. Pure — the whole vertical contract lives here.
+    static func box(forLineFragmentUnion rect: CGRect) -> CGRect {
+        rect.insetBy(dx: 0, dy: -CodeWellMetrics.interiorPadding)
+    }
+
+    /// The union of the TEXT LINE FRAGMENTS covering `nsRange`, in container coordinates, or nil when
+    /// the range doesn't resolve / isn't laid out. No `.ensuresLayout`: only already-laid-out
+    /// (≈ visible) content is decorated, so drawing never forces full-document layout.
+    static func lineFragmentUnion(for nsRange: NSRange, in layoutManager: NSTextLayoutManager) -> CGRect? {
+        guard let textRange = textRange(for: nsRange, in: layoutManager) else { return nil }
+        var union = CGRect.null
+        layoutManager.enumerateTextLayoutFragments(from: textRange.location, options: []) { fragment in
+            guard fragment.rangeInElement.location.compare(textRange.endLocation) == .orderedAscending else { return false }
+            let origin = fragment.layoutFragmentFrame.origin
+            for line in fragment.textLineFragments {
+                union = union.union(line.typographicBounds.offsetBy(dx: origin.x, dy: origin.y))
+            }
+            return true
+        }
+        return union.isNull ? nil : union
+    }
+
+    /// The well box for a code block's character range, or nil when it isn't laid out.
+    static func wellBox(for nsRange: NSRange, in layoutManager: NSTextLayoutManager) -> CGRect? {
+        lineFragmentUnion(for: nsRange, in: layoutManager).map(box(forLineFragmentUnion:))
+    }
+
+    /// `nsRange` (UTF-16, document-relative) resolved against the layout manager's content.
+    static func textRange(for nsRange: NSRange, in layoutManager: NSTextLayoutManager) -> NSTextRange? {
+        guard let content = layoutManager.textContentManager,
+              let start = content.location(content.documentRange.location, offsetBy: nsRange.location),
+              let end = content.location(start, offsetBy: nsRange.length) else { return nil }
+        return NSTextRange(location: start, end: end)
+    }
 }

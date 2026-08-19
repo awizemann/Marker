@@ -174,6 +174,24 @@ public nonisolated enum EditorCommands {
                         selectionAfter: selection)
     }
 
+    /// The `[ ]` / `[x]` CELL of a task item's marker — the 3 characters `[`, the state character,
+    /// and `]` — plus whether it is checked. `blockRange` is the `.taskItem` block's range in `text`.
+    /// Returns nil when the block doesn't start with a task marker.
+    ///
+    /// Pure geometry, shared by the renderer (which paints a checkbox over the cell in hide-markers
+    /// mode) and by tests; the click-toggle above derives the same span independently from the same
+    /// pattern, so the drawn box and the click target coincide exactly.
+    public static func taskCheckboxCell(in text: String, blockRange: NSRange) -> (cell: NSRange, checked: Bool)? {
+        let ns = text as NSString
+        guard blockRange.location >= 0, blockRange.length > 0, NSMaxRange(blockRange) <= ns.length else { return nil }
+        let blockText = ns.substring(with: blockRange)
+        guard let m = blockText.range(of: "^\\s*[-*+] \\[[ xX]\\](?= )", options: .regularExpression) else { return nil }
+        let markerLength = (String(blockText[m]) as NSString).length   // indent + bullet + `[x]`
+        let cell = NSRange(location: blockRange.location + markerLength - 3, length: 3)
+        guard cell.location >= blockRange.location, NSMaxRange(cell) <= ns.length else { return nil }
+        return (cell, ns.character(at: cell.location + 1) != UInt16(UInt8(ascii: " ")))
+    }
+
     // MARK: - Wiki-link completion (typing inside an unclosed `[[`)
 
     /// The live wiki-link completion context at a caret: non-nil while the caret sits inside an

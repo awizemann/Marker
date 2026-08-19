@@ -96,6 +96,13 @@ let package = Package(
             dependencies: ["Marker"],
             swiftSettings: markerSwiftSettings
         ),
+        // The AppKit render layer's unit tests (styling attributes, layout metrics). Separate from
+        // MarkerTests, which stays pure-core (no AppKit) like the `Marker` target it covers.
+        .testTarget(
+            name: "MarkerEditorTests",
+            dependencies: ["MarkerEditor"],
+            swiftSettings: markerSwiftSettings
+        ),
         .testTarget(
             name: "MarkerHighlightingTests",
             dependencies: ["MarkerHighlighting"],
