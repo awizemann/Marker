@@ -440,6 +440,58 @@ struct EditorCommandsTests {
         // clicks in a task's text destructive), or if indent/bullet variants miss.
     }
 
+    @Test("a padded box toggles AND normalizes to the canonical [x] / [ ]")
+    func checkboxNormalizesPadding() {
+        // Clicking a padded box rewrites the whole interior, so the line lands on canonical form.
+        #expect(toggled("- [ x] Ranfall", at: 3) == "- [ ] Ranfall")
+        #expect(toggled("- [x ] done", at: 3) == "- [ ] done")
+        #expect(toggled("- [  ] todo", at: 3) == "- [x] todo")
+        #expect(toggled("- [ X ] done", at: 3) == "- [ ] done")
+        #expect(toggled("- [] todo", at: 2) == nil)                // bare [] is not a box — no-op
+        // The cell is the whole `[`…`]` span, so its far edge (just past `]`) still hits.
+        #expect(toggled("- [ x] t", at: 6) == "- [ ] t")
+        #expect(toggled("- [ x] t", at: 7) == nil)      // past the cell — body text
+    }
+
+    @Test("normalizing a padded box shifts selectionAfter by the length delta")
+    func checkboxPaddingSelectionShift() {
+        // "- [ x] t": cell 2..<6 (`[ x]`), interior 3..<5 (2 wide) → collapses to 1, delta -1.
+        func after(_ text: String, selection: NSRange) -> NSRange? {
+            EditorCommands.taskCheckboxToggle(in: text, blockRange: NSRange(location: 0, length: (text as NSString).length),
+                                              location: 3, selection: selection)?.selectionAfter
+        }
+        #expect(after("- [ x] t", selection: caret(7)) == caret(6))               // caret after the box shifts left
+        #expect(after("- [ x] t", selection: caret(2)) == caret(2))               // before the box: untouched
+        #expect(after("- [ x] t", selection: NSRange(location: 0, length: 8)) == NSRange(location: 0, length: 7))
+        #expect(after("- [ x] t", selection: caret(4)) == caret(4))               // caught inside: clamped onto the cell
+        // Canonical boxes are byte-identical to the old 1-for-1 swap: no shift at all.
+        #expect(after("- [ ] t", selection: NSRange(location: 6, length: 1)) == NSRange(location: 6, length: 1))
+        // DISCRIMINATION: fails if the delta is ignored — the caret would drift into the checkbox.
+    }
+
+    @Test("taskCheckboxCell spans the whole padded box")
+    func checkboxCellSpansPadding() {
+        func cell(_ text: String) -> (String, Bool)? {
+            guard let r = EditorCommands.taskCheckboxCell(in: text, blockRange: NSRange(location: 0, length: (text as NSString).length))
+            else { return nil }
+            return ((text as NSString).substring(with: r.cell), r.checked)
+        }
+        #expect(cell("- [ ] t")! == ("[ ]", false))
+        #expect(cell("- [x] t")! == ("[x]", true))
+        #expect(cell("- [ x] Ranfall")! == ("[ x]", true))
+        #expect(cell("- [x ] t")! == ("[x ]", true))
+        #expect(cell("- [  ] t")! == ("[  ]", false))
+        #expect(cell("- [ X ] t")! == ("[ X ]", true))
+        #expect(cell("- plain") == nil)
+    }
+
+    @Test("Enter on a padded task continues with a fresh canonical [ ] item")
+    func paddedTaskContinuation() {
+        #expect(newline("- [ x] Ranfall", 14)?.text == "- [ x] Ranfall\n- [ ] ")
+        #expect(newline("- [  ] todo", 11)?.text == "- [  ] todo\n- [ ] ")
+        #expect(newline("- [ x] ", 7)?.text == "")     // empty padded item exits the list
+    }
+
     @Test("checkbox toggle on a block mid-document uses absolute offsets")
     func checkboxMidDocument() {
         let text = "para\n- [ ] task\nafter"

@@ -345,7 +345,7 @@ struct EditorStyler {
         let ns = block.text as NSString
         let firstLine = ns.substring(with: ns.lineRange(for: NSRange(location: 0, length: 0)))
         switch block.kind {
-        case .taskItem:     return matchLength(firstLine, "^\\s*[-*+] \\[[ xX]\\] ")
+        case .taskItem:     return matchLength(firstLine, "^\\s*[-*+] \(EditorCommands.taskBoxPattern) ")
         case .bulletItem:   return matchLength(firstLine, "^\\s*[-*+] ")
         case .orderedItem:  return matchLength(firstLine, "^\\s*\\d+\\. ")
         default:            return 0

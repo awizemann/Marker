@@ -109,7 +109,13 @@ public nonisolated enum EditorCommands {
                         selectionAfter: NSRange(location: selection.location + (insert as NSString).length, length: 0))
     }
 
-    private static let taskContinuationRE  = try! NSRegularExpression(pattern: "^(\\s*)([-*+]) \\[[ xX]\\] ")
+    /// The task checkbox box, LENIENT about whitespace padding inside: matches `[x]`, `[ ]`, and the
+    /// real-world padded forms `[ x]`, `[x ]`, `[  ]`, `[ X ]`, `[]`. Checked iff an x/X is present.
+    /// Single source of the marker shape — the parser (`MarkdownParser.taskState`), the styler
+    /// (`EditorStyling.leadingMarkerLength`) and every pattern below agree on it.
+    public static let taskBoxPattern = "\\[(?: *[xX] *| +)\\]"
+
+    private static let taskContinuationRE  = try! NSRegularExpression(pattern: "^(\\s*)([-*+]) \(taskBoxPattern) ")
     private static let bulletContinuationRE = try! NSRegularExpression(pattern: "^(\\s*)([-*+]) ")
     private static let orderedContinuationRE = try! NSRegularExpression(pattern: "^(\\s*)(\\d+)\\. ")
     private static let quoteContinuationRE  = try! NSRegularExpression(pattern: "^(\\s*)> ")
@@ -149,33 +155,39 @@ public nonisolated enum EditorCommands {
 
     // MARK: - Task checkbox toggle (click on the `[ ]`/`[x]` cells)
 
-    /// The one-character edit that toggles a task item's checkbox when a click lands INSIDE its
-    /// `[ ]` / `[x]` marker cells. `blockRange` is the `.taskItem` block's range in `text`;
-    /// `location` is the clicked character index (an insertion-point index, so the `[`…`]` cells
-    /// span `boxStart...boxEnd` inclusive). Returns nil when the click is outside the cells or the
-    /// block doesn't start with a task marker. The replacement is space↔x at the box interior;
-    /// `selectionAfter` keeps the caller's selection — a 1-for-1 character swap shifts no offsets,
-    /// so the caret stays exactly where it was.
+    /// The edit that toggles a task item's checkbox when a click lands INSIDE its `[`…`]` cell.
+    /// `blockRange` is the `.taskItem` block's range in `text`; `location` is the clicked character
+    /// index (an insertion-point index, so the cell spans `cell.location...NSMaxRange(cell)`
+    /// inclusive). Returns nil when the click is outside the cell or the block doesn't start with a
+    /// task marker.
+    ///
+    /// The toggle NORMALIZES: the whole box interior is replaced with `x` or a single space, so a
+    /// padded `[ x]` becomes canonical `[ ]` / `[x]`. When that changes the cell's length,
+    /// `selectionAfter` is shifted by the delta so the caret keeps its logical spot (a selection
+    /// caught inside the interior collapses onto the normalized cell). For a canonical `[x]`/`[ ]`
+    /// the delta is zero and the edit is byte-identical to the old 1-for-1 swap.
     public static func taskCheckboxToggle(in text: String, blockRange: NSRange, location: Int, selection: NSRange) -> TextEdit? {
-        let ns = text as NSString
-        guard blockRange.location >= 0, NSMaxRange(blockRange) <= ns.length else { return nil }
-        let blockText = ns.substring(with: blockRange)
-        // The leading task marker on the block's FIRST line (same shape as taskContinuationRE, but
-        // anchored with a lookahead so the trailing space isn't consumed into the box geometry).
-        guard let m = blockText.range(of: "^\\s*[-*+] \\[[ xX]\\](?= )", options: .regularExpression) else { return nil }
-        let markerLength = (String(blockText[m]) as NSString).length   // "…- [x]" — indent + bullet + box
-        let boxEnd = blockRange.location + markerLength                // index just past `]`
-        let interior = boxEnd - 2                                      // the ` `/`x` cell
-        let boxStart = boxEnd - 3                                      // the `[`
-        guard location >= boxStart, location <= boxEnd else { return nil }
-        let isChecked = ns.character(at: interior) != UInt16(UInt8(ascii: " "))
-        return TextEdit(range: NSRange(location: interior, length: 1),
+        guard let (cell, isChecked) = taskCheckboxCell(in: text, blockRange: blockRange) else { return nil }
+        guard location >= cell.location, location <= NSMaxRange(cell) else { return nil }
+
+        let interior = NSRange(location: cell.location + 1, length: cell.length - 2)   // between `[` and `]`
+        let interiorEnd = NSMaxRange(interior)
+        let delta = 1 - interior.length                                                // new interior is 1 char
+
+        func moved(_ p: Int) -> Int {
+            if p <= interior.location { return p }
+            if p >= interiorEnd { return p + delta }
+            return min(p, interiorEnd + delta)                                         // was inside the old box
+        }
+        let start = moved(selection.location)
+        let after = NSRange(location: start, length: max(0, moved(NSMaxRange(selection)) - start))
+        return TextEdit(range: interior,
                         replacement: isChecked ? " " : "x",
-                        selectionAfter: selection)
+                        selectionAfter: after)
     }
 
-    /// The `[ ]` / `[x]` CELL of a task item's marker — the 3 characters `[`, the state character,
-    /// and `]` — plus whether it is checked. `blockRange` is the `.taskItem` block's range in `text`.
+    /// The `[ ]` / `[x]` CELL of a task item's marker — `[`, the (possibly space-padded) interior,
+    /// and `]`, so the span is 2+ characters wide — plus whether it is checked. `blockRange` is the `.taskItem` block's range in `text`.
     /// Returns nil when the block doesn't start with a task marker.
     ///
     /// Pure geometry, shared by the renderer (which paints a checkbox over the cell in hide-markers
@@ -185,11 +197,14 @@ public nonisolated enum EditorCommands {
         let ns = text as NSString
         guard blockRange.location >= 0, blockRange.length > 0, NSMaxRange(blockRange) <= ns.length else { return nil }
         let blockText = ns.substring(with: blockRange)
-        guard let m = blockText.range(of: "^\\s*[-*+] \\[[ xX]\\](?= )", options: .regularExpression) else { return nil }
-        let markerLength = (String(blockText[m]) as NSString).length   // indent + bullet + `[x]`
-        let cell = NSRange(location: blockRange.location + markerLength - 3, length: 3)
+        guard let m = blockText.range(of: "^\\s*[-*+] \(taskBoxPattern)(?= )", options: .regularExpression),
+              let box = blockText.range(of: taskBoxPattern, options: .regularExpression, range: m) else { return nil }
+        let cellStart = (String(blockText[blockText.startIndex..<box.lowerBound]) as NSString).length
+        let cellLength = (String(blockText[box]) as NSString).length   // `[`…`]` — 2+ chars
+        let cell = NSRange(location: blockRange.location + cellStart, length: cellLength)
         guard cell.location >= blockRange.location, NSMaxRange(cell) <= ns.length else { return nil }
-        return (cell, ns.character(at: cell.location + 1) != UInt16(UInt8(ascii: " ")))
+        let checked = ns.substring(with: cell).contains(where: { $0 == "x" || $0 == "X" })
+        return (cell, checked)
     }
 
     // MARK: - Wiki-link completion (typing inside an unclosed `[[`)
@@ -431,16 +446,16 @@ public nonisolated enum EditorCommands {
     /// negative lookahead, so a task line isn't mistaken for an already-bulleted line.
     private static func hasPrefix(_ kind: LinePrefix, _ line: String) -> Bool {
         switch kind {
-        case .bullet: return line.range(of: "^\\s*[-*+] (?!\\[[ xX]\\] )", options: .regularExpression) != nil
+        case .bullet: return line.range(of: "^\\s*[-*+] (?!\(taskBoxPattern) )", options: .regularExpression) != nil
         case .ordered: return line.range(of: "^\\s*\\d+\\. ", options: .regularExpression) != nil
-        case .task:   return line.range(of: "^\\s*[-*+] \\[[ xX]\\] ", options: .regularExpression) != nil
+        case .task:   return line.range(of: "^\\s*[-*+] \(taskBoxPattern) ", options: .regularExpression) != nil
         case .quote:  return line.range(of: "^\\s*> ", options: .regularExpression) != nil
         }
     }
 
     /// Strip ANY leading list/task marker (task form first, since it's the longest), preserving indent.
     private static func stripAnyListMarker(_ line: String) -> String {
-        line.replacingOccurrences(of: "^(\\s*)(?:[-*+] \\[[ xX]\\] |[-*+] |\\d+\\. )", with: "$1",
+        line.replacingOccurrences(of: "^(\\s*)(?:[-*+] \(taskBoxPattern) |[-*+] |\\d+\\. )", with: "$1",
                                   options: .regularExpression)
     }
 
@@ -458,7 +473,7 @@ public nonisolated enum EditorCommands {
         switch kind {
         case .bullet: pattern = "^(\\s*)[-*+] "
         case .ordered: pattern = "^(\\s*)\\d+\\. "
-        case .task:   pattern = "^(\\s*)[-*+] \\[[ xX]\\] "
+        case .task:   pattern = "^(\\s*)[-*+] \(taskBoxPattern) "
         case .quote:  pattern = "^(\\s*)> "
         }
         return line.replacingOccurrences(of: pattern, with: "$1", options: .regularExpression)

@@ -31,6 +31,32 @@ struct TaskCheckboxGatingTests {
         #expect(ns.substring(with: cells[1].cell) == "[x]")
     }
 
+    @Test("Padded boxes get a cell too, spanning the whole [ … ] span")
+    func paddedCells() {
+        let padded = "- [ x] Ranfall\n- [  ] todo\n- [ X ] done\n- [x ] mixed\n"
+        let model = EditorModel(text: padded)
+        model.hideMarkers = true
+        let cells = EditorView.taskCheckboxes(model)
+        let ns = padded as NSString
+        #expect(cells.map { ns.substring(with: $0.cell) } == ["[ x]", "[  ]", "[ X ]", "[x ]"])
+        #expect(cells.map(\.checked) == [true, false, true, true])
+        // DISCRIMINATION: a strict 3-char cell would clip the padding and draw the checkbox off-centre.
+    }
+
+    @Test("hide-markers paints the WHOLE padded cell clear — no literal bracket left showing")
+    func paddedCellFullyHidden() {
+        let padded = "- [ X ] done\n"
+        let model = EditorModel(text: padded)
+        model.hideMarkers = true
+        let storage = NSTextStorage(string: padded)
+        EditorStyler(theme: MarkerTheme.fallback).apply(to: storage, model: model)
+        let cell = (padded as NSString).range(of: "[ X ]")
+        for i in cell.location..<NSMaxRange(cell) {
+            let color = storage.attribute(.foregroundColor, at: i, effectiveRange: nil) as? NSColor
+            #expect(color == NSColor.clear, "character at \(i) is not hidden")
+        }
+    }
+
     @Test("Source mode draws nothing")
     func sourceMode() {
         #expect(EditorView.taskCheckboxes(model(source: true)).isEmpty)

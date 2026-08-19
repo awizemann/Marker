@@ -30,6 +30,11 @@ struct MarkdownContentTextTests {
         #expect(contents("12) twelve\n") == ["twelve"])
         #expect(contents("- [ ] todo\n") == ["todo"])
         #expect(contents("- [x] done\n") == ["done"])
+        // Padded boxes: the WHOLE `[`…`]` span is stripped, not just three characters.
+        #expect(contents("- [ x] Ranfall\n") == ["Ranfall"])
+        #expect(contents("- [x ] done\n") == ["done"])
+        #expect(contents("- [  ] todo\n") == ["todo"])
+        #expect(contents("- [ X ] done\n") == ["done"])
     }
 
     @Test("blockquotes lose the > prefix per line, keeping line structure")

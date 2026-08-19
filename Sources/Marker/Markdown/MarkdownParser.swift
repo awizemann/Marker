@@ -157,20 +157,28 @@ public nonisolated enum MarkdownParser {
     }
 
     /// `- [ ] ` / `- [x] ` / `* [X] ` → task item (checked?).
+    ///
+    /// LENIENT about whitespace padding inside the box — real files carry `- [ x] `, `- [x ] `,
+    /// `- [  ] `, `- [ X ] `. The shape is `[` + spaces? + (x|X)? + spaces? + `]`, and the item is
+    /// checked iff an x/X is present (so `[  ]` is unchecked; bare `[]` is NOT a box). The box must be followed by a space
+    /// or end the line. Nothing is rewritten here — the raw bytes stay exactly as written.
     static func taskState(_ s: String) -> Bool? {
         let t = fullyTrimmed(s)
         guard let first = t.first, first == "-" || first == "*" || first == "+" else { return nil }
         let rest = t.dropFirst()
         guard rest.first == " " else { return nil }
-        let afterMarker = rest.dropFirst()
-        guard afterMarker.hasPrefix("[") else { return nil }
-        let box = afterMarker.dropFirst()                       // after '['
-        guard let mark = box.first, box.dropFirst().first == "]" else { return nil }
-        switch mark {
-        case " ": return false
-        case "x", "X": return true
-        default: return nil
-        }
+        var box = rest.dropFirst()
+        guard box.first == "[" else { return nil }
+        box = box.dropFirst()                                   // after '['
+        guard box.first == " " || box.first == "x" || box.first == "X" else { return nil }   // `[]` is not a box
+        while box.first == " " { box = box.dropFirst() }
+        var checked = false
+        if let mark = box.first, mark == "x" || mark == "X" { checked = true; box = box.dropFirst() }
+        while box.first == " " { box = box.dropFirst() }
+        guard box.first == "]" else { return nil }
+        let after = box.dropFirst().first
+        guard after == nil || after == " " else { return nil }
+        return checked
     }
 
     static func bulletMarker(_ s: String) -> Character? {

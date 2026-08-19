@@ -53,6 +53,16 @@ struct MarkdownParserTests {
         #expect(kinds("2. item\n") == [.orderedItem(number: 2)])
         #expect(kinds("- [ ] t\n") == [.taskItem(checked: false)])
         #expect(kinds("- [x] t\n") == [.taskItem(checked: true)])
+        // PADDED boxes — real files carry them; whitespace inside the box is tolerated and the item
+        // is checked iff an x/X is present. DISCRIMINATION: a strict `[ ]|[x]` matcher renders these
+        // as plain bullets with literal "[ x]" text (the "- [ x] Ranfall" bug).
+        #expect(kinds("- [ x] t\n") == [.taskItem(checked: true)])
+        #expect(kinds("- [x ] t\n") == [.taskItem(checked: true)])
+        #expect(kinds("- [ X ] t\n") == [.taskItem(checked: true)])
+        #expect(kinds("- [  ] t\n") == [.taskItem(checked: false)])   // multi-space = unchecked
+        #expect(kinds("- [] t\n") == [.bulletItem(marker: "-")])        // bare [] is not a box (GFM)
+        #expect(kinds("- [y] t\n") == [.bulletItem(marker: "-")])     // still not a checkbox
+        #expect(kinds("- [x y] t\n") == [.bulletItem(marker: "-")])   // padding only, no content
         #expect(kinds("---\n") == [.thematicBreak])
         #expect(kinds("> q\n") == [.blockquote])
         #expect(kinds("plain text\n") == [.paragraph])

@@ -86,14 +86,20 @@ public nonisolated extension MarkdownBlock {
         return String(t)
     }
 
-    /// Strip `<indent><marker> [x] ` — marker, checkbox, and one following space.
+    /// Strip `<indent><marker> [x] ` — marker, checkbox, and one following space. The checkbox may
+    /// be padded (`[ x]`, `[x ]`, `[  ]`, `[ X ]`); the WHOLE `[`…`]` span goes, same as the parser
+    /// accepts (see `MarkdownParser.taskState`).
     private static func afterTaskMarker(_ line: String) -> String {
-        var t = Substring(afterListMarker(line))                // "[x] content"
-        if t.hasPrefix("["), t.dropFirst(2).first == "]" {
-            t = t.dropFirst(3)
-            if t.first == " " { t = t.dropFirst() }
-        }
-        return String(t)
+        let t = Substring(afterListMarker(line))                // "[x] content"
+        guard t.first == "[" else { return String(t) }
+        var probe = t.dropFirst()
+        while probe.first == " " { probe = probe.dropFirst() }
+        if let mark = probe.first, mark == "x" || mark == "X" { probe = probe.dropFirst() }
+        while probe.first == " " { probe = probe.dropFirst() }
+        guard probe.first == "]" else { return String(t) }      // not a checkbox — leave it alone
+        var body = probe.dropFirst()
+        if body.first == " " { body = body.dropFirst() }
+        return String(body)
     }
 
     private static func afterQuoteMarker(_ line: String) -> String {
