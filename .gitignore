@@ -4,3 +4,11 @@
 /Packages
 xcuserdata/
 DerivedData/
+
+# Memophant app-local state (machine-specific, not for git)
+.memophant/
+
+sessions/.raw/
+sessions/.index.json
+
+.claude/memophant-activity.log
