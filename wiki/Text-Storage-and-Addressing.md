@@ -40,36 +40,32 @@ For TextKit 2 integration, the text view's storage is always UTF-16, and all `NS
 Each `MarkdownBlock` owns a range into the source text:
 
 ```swift
-public struct MarkdownBlock: Identifiable {
+public struct MarkdownBlock: Identifiable, Sendable, Equatable {
+  public let id: Int          // source-order index
   public let kind: BlockKind
-  public let range: NSRange  // UTF-16 offsets
-  public let inlines: [MarkdownInline]  // ranges into range
-  // ...
+  public let range: NSRange   // UTF-16 offsets into the document
+  public let text: String     // the verbatim slice of `range` (kept so callers don't re-slice)
+  public let indent: Int
 }
 ```
 
-When you parse a document, you get back an array of `MarkdownBlock`s. None of them copy the source text — they just record where in the source they live.
-
-To get the block's text, slice the source:
-
-```swift
-let blockText = (sourceText as NSString).substring(with: block.range)
-```
+When you parse a document, you get back an array of `MarkdownBlock`s. Each records where in the
+source it lives; `text` is that exact slice, never a transformed copy — the blocks tile the source
+byte-for-byte (the parser tests assert this across CRLF and no-trailing-newline corpora).
 
 ## How inlines address their block
 
-Inside each block, the inline scanner finds formatting spans (bold, italic, code, links, etc.). Each `MarkdownInline` owns a range into the *block*, not the document:
+Inside a block, `MarkdownInline.spans(in: block.text)` finds formatting runs. Each `InlineSpan`
+carries ranges **relative to the block text**, not the document: the `markerRanges` to dim (the
+`**`, the backticks, the `[`…`](url)` scaffolding), the `contentRange` inside the markers, and an
+optional `destinationRange` (an image's URL):
 
 ```swift
-let blockRange = block.range
-let inlineRange = inline.range  // offset from blockRange.location
-
-let absoluteRange = NSRange(
-  location: blockRange.location + inlineRange.location,
-  length: inlineRange.length
-)
-
-let inlineText = (sourceText as NSString).substring(with: absoluteRange)
+for span in MarkdownInline.spans(in: block.text) {
+    let absolute = NSRange(location: block.range.location + span.contentRange.location,
+                           length: span.contentRange.length)
+    let content = (sourceText as NSString).substring(with: absolute)
+}
 ```
 
 ## How edits work

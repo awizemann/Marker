@@ -1,1 +1,1 @@
-_Edited in the repo's `wiki/` folder and managed by Memophant. See [Wiki Maintenance](Wiki-Maintenance)._
+_Marker — the Markdown engine from [TrapperKeeper](https://trapperkeeper.co). Pages live in the repo's `wiki/` folder, managed by Memophant; see [Wiki Maintenance](Wiki-Maintenance). Releases: [GitHub](https://github.com/awizemann/Marker/releases)._

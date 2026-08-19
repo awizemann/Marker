@@ -37,11 +37,11 @@ For the addressing scheme and UTF-16 invariants that enable this, see [[marker/c
 
 ## Extension points: consumer seams
 
-App-specific behavior enters through closures and protocols — never by forking the package. Six primary seams tie the app to Marker:
+App-specific behavior enters through closures and protocols — never by forking the package. Seven seams tie the app to Marker:
 
 | Seam | What it does |
 |---|---|
-| `MarkerTheme` | Design tokens: palette colors, prose/mono/ui font families, accent defaults. Build one from your design system. |
+| `MarkerTheme` | Design tokens: ten palette colors, prose/mono/ui font families or system designs, appearance-adaptive accent defaults. Pass adaptive colors and the editor follows light/dark with no further plumbing. |
 | `onLinkActivate` | Cmd+click on a link (URL, wiki link, or bare URL) — you resolve and open. |
 | `wikiCompletions` | Candidates for the `[[` completion popup; you rank and cap, the editor presents. |
 | `onDropFiles` | Non-image file drops → the markdown to insert (or nil to decline). |

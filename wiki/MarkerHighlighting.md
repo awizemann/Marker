@@ -5,101 +5,90 @@ source_sha: 1736f6affa5fd5581eb381b584eafe480accbbc2
 source_paths: Sources/MarkerHighlighting
 source_paths_inferred: false
 ---
-
 # MarkerHighlighting
 
-Tree-sitter–based syntax highlighting for code fences. Grammars are vendored in the package; highlighting is plugged into the editor via the `CodeTokenProviding` seam. Optional — light consumers skip MarkerHighlighting entirely and use flat mono code.
+Tree-sitter syntax colouring for fenced code blocks (`Sources/MarkerHighlighting/`). It plugs into
+the editor through the core's `CodeTokenProviding` seam and is **optional** — a consumer that skips
+it gets flat monospaced code and none of the grammar payload.
 
-## CodeHighlighter: the main entry point
-
-`CodeHighlighter` (`Sources/MarkerHighlighting/CodeHighlighter.swift:35`) is the public interface. It's initialized once (typically a shared singleton) and cached globally.
-
-### Supported languages
-
-- JSON (`tree-sitter-json`)
-- TypeScript and JavaScript (`tree-sitter-typescript` — JS is a subset)
-- Bash (`tree-sitter-bash`)
-- Go (`tree-sitter-go`)
-- Rust (`tree-sitter-rust`)
-- HTML (`tree-sitter-html`)
-- Swift (vendored into `CTreeSitterSwift` — see below)
-- Python (vendored into `CTreeSitterPython` — see below)
-
-CSS is not currently supported (grammar packaging issues in SPM).
-
-## How it works
-
-When you pass a code block to `CodeHighlighter.tokens(code:language:)`, it:
-
-1. Looks up the grammar for the language (e.g., "swift" → the Swift parser).
-2. Parses the code with tree-sitter.
-3. Runs a hand-written query (e.g., `highlights.scm`) that captures semantic tokens — keywords, strings, function names, etc.
-4. Returns an array of `HighlightToken`s, each with a byte range and a semantic kind (`"keyword"`, `"string"`, `"comment"`, etc.).
-
-`EditorStyler` (in MarkerEditor) then maps each semantic kind to a theme color via `MarkerTheme.tokenColor(_:)`.
-
-The result: colored code in the editor, with the styling tied to the semantic structure of the code, not just regex patterns.
-
-## Vendored grammars: Swift and Python
-
-SPM doesn't package Swift and Python grammars cleanly as dependencies (Swift's Package.swift has no generated `src/parser.c`; Python's relies on relative paths that fail when consumed as a dependency). We instead vendor the generated `src/parser.c` and `src/scanner.c` into two local C targets:
-
-- **`CTreeSitterSwift`** (`Sources/Marker/Dependencies/CTreeSitterSwift/…`)
-- **`CTreeSitterPython`** (`Sources/Marker/Dependencies/CTreeSitterPython/…`)
-
-This bypasses the SPM bugs and gives us full control over the build.
-
-Other grammars (JSON, TypeScript, Bash, Go, Rust, HTML) are pulled from SPM packages and linked directly.
-
-## Caching and performance
-
-`CodeHighlighter` caches both:
-
-1. **Parsed grammars** — a `Grammar` struct holds the language parser, tree-sitter query, and compiled query state. Cached by language.
-2. **Token results** — an in-memory LRU cache maps (code, language) pairs to token arrays. Prevents re-parsing the same code block.
-
-For large documents with many code blocks, caching is critical to keep syntax highlighting responsive.
-
-## CodeTokenProviding seam
-
-`CodeTokenProviding` (in the core Marker package, `Sources/Marker/Markdown/CodeHighlighting.swift:28`) is the protocol that lets the editor query tokens for a code block:
+## The seam
 
 ```swift
+// Sources/Marker/Markdown/CodeHighlighting.swift (core)
 public protocol CodeTokenProviding: AnyObject {
-  func tokens(code: String, language: String) -> [HighlightToken]
+    func tokens(for code: String, language: String) -> [HighlightToken]
 }
+public struct HighlightToken { let range: NSRange; let capture: String }   // UTF-16 range into `code`
 ```
 
-`CodeHighlighter` conforms to this protocol. Pass it to `EditorView` and the editor will automatically query it for every code block. Consumers can also implement their own provider (e.g., a remote syntax-highlighting service).
+`CodeHighlighter` (`Sources/MarkerHighlighting/CodeHighlighter.swift`) conforms. Pass
+`CodeHighlighter.shared` (or your own provider) as `EditorView(highlighter:)`. For each fenced
+block the styler asks for tokens and sets **colour attributes only** — the code bytes are untouched.
 
-## Integration with the editor
+## Languages
 
-In `EditorView` initialization:
+| Fence tag(s) | Grammar | How it ships |
+|---|---|---|
+| `json`, `json5` | tree-sitter-json | SPM package |
+| `javascript`, `js`, `jsx`, `mjs`, `cjs`, `node`; `typescript`, `ts`, `tsx` | tree-sitter-typescript (JS parsed by the TS grammar) | SPM package |
+| `bash`, `sh`, `shell`, `zsh`, `shellscript` | tree-sitter-bash | SPM package |
+| `go`, `golang` | tree-sitter-go | SPM package |
+| `rust`, `rs` | tree-sitter-rust | SPM package |
+| `html`, `htm`, `xhtml` | tree-sitter-html | SPM package |
+| `swift` | tree-sitter-swift | **vendored** C target `Sources/CTreeSitterSwift` |
+| `python`, `py` | tree-sitter-python | **vendored** C target `Sources/CTreeSitterPython` |
 
-```swift
-EditorView(model: editor, theme: myTheme,
-           highlighter: CodeHighlighter.shared,  // or nil for flat mono
-           …)
-```
+Untagged fences run through `MarkdownCodeLanguage.detect(_:)` (core) — a conservative heuristic that
+recognises JSON, JS/TS, Swift, Python, Go, Rust, shell, and markup from distinctive signals and
+returns nil rather than guess. Unsupported or undetected languages stay flat mono. CSS is not
+shipped (grammar packaging issues under SPM).
 
-If `highlighter` is non-nil, `EditorStyler` calls `highlighter.tokens(...)` for each code block and applies the returned tokens as attributes over the code text.
+Why Swift and Python are vendored: their upstream packages don't build cleanly as SPM dependencies
+(Swift lacks a committed generated `parser.c`; Python's manifest uses relative paths that break when
+consumed). Vendoring the generated `src/parser.c` + `scanner.c` into local C targets sidesteps that.
+Details: [[marker/architecture/syntax-highlighting-tree-sitter-integration]].
 
-If `highlighter` is nil, code blocks are rendered in a plain monospace font with no semantic coloring.
+## How tokens become colours
 
-## Tree-sitter integration details
+1. `CodeHighlighter.tokens(for:language:)` folds the fence tag to a canonical language, parses with
+   the cached tree-sitter `Parser`, and runs the language's highlight `Query`; every capture becomes
+   a `HighlightToken(range, capture)`.
+2. `EditorStyler.syntaxColor(_:)` (`Sources/MarkerEditor/EditorStyling.swift`) maps the
+   dot-hierarchical capture name to the theme, by prefix:
 
-See [[marker/architecture/syntax-highlighting-tree-sitter-integration]] for the architectural details, dependency strategy, and scanner/grammar choices.
+| Capture prefix | Theme colour |
+|---|---|
+| `comment` | `faint` |
+| `string.special.key`, `property`, `field` | `deep` |
+| `string`, `character` | `codeString` (gold) |
+| `number`, `boolean`, `constant`, `float` | `codeConstant` (teal) |
+| `keyword`, `operator`, `conditional`, `repeat`, `include` | `deep` |
+| `function`, `method`, `constructor` | `primary` |
+| `type` | `codeType` |
+| `escape` | `bright` |
+| `punctuation` | `muted` |
 
-## Adding a new language
+Everything else keeps the block's `inkSoft` base. All of these are appearance-adaptive when the
+theme is (see [MarkerEditor](MarkerEditor) → *Theming and appearance*).
 
-To add a new language (e.g., Ruby):
+## Caching and threading
 
-1. Add the tree-sitter Ruby grammar as an SPM dependency in `Package.swift` (if packaged nicely).
-2. Add a case to the language enum in `CodeHighlighter`.
-3. Write or adapt a `highlights.scm` query for the language (tree-sitter's semantic query language).
-4. Test: `CodeHighlighter.tokens(code: "...", language: "ruby")`.
+`CodeHighlighter` is `@MainActor` (tree-sitter's C types aren't `Sendable`, and it runs inside the
+main-actor styler). It keeps one compiled `Grammar` (language + query + parser) per canonical
+language — including a recorded *nil* for languages that failed to build, so they aren't retried — and
+a `(code, language) → tokens` result cache with a crude size bound (cleared past 96 entries), so a
+per-keystroke restyle only recomputes the code block that actually changed.
 
-For languages not cleanly packaged (like Python), vendor the generated `parser.c` and `scanner.c` instead.
+## Adding a language
+
+1. Add the grammar: an SPM package dependency in `Package.swift` if it builds cleanly, otherwise a
+   vendored C target like `CTreeSitterSwift` (generated `parser.c`, optional `scanner.c`, and the
+   upstream `highlights.scm` + licence notice).
+2. Register it in `CodeHighlighter.canonicalLanguage(_:)` (aliases → canonical id) and the grammar
+   registry switch (`tree_sitter_<lang>()` + query name).
+3. Optionally teach `MarkdownCodeLanguage.detect(_:)` a distinctive signal for untagged fences.
+4. Add a `CodeHighlighterTests` case that asserts the captures land at the right UTF-16 ranges (the
+   existing tests include an emoji case precisely to catch byte/UTF-16 slips).
 
 ---
 _Last updated: 2026-08-19_

@@ -2,265 +2,158 @@
 created: 2026-08-19
 updated: 2026-08-19
 ---
-
 # Consumer Integration
 
-Marker is designed to integrate into macOS apps via **consumer seams** — closures and protocols that plug app-specific behavior into the engine without requiring a fork of the package.
+How an app embeds Marker. App-specific behaviour enters through **seams** — a theme struct and a
+handful of closures/protocols — never by forking the package. The hand-maintained, authoritative
+guide is `docs/Integration.md` in the repo; this page is the wiki's orientation to the same material
+plus the practical lessons from the two reference consumers (TrapperKeeper, ShabuBox).
 
-This page walks through wiring each seam and common integration patterns. For the full API reference, see `docs/Integration.md`.
+## 1. Pick your products
 
-## Quick start
+| You want | Depend on |
+|---|---|
+| Parse/inspect Markdown, drive your own renderer, or reuse the command engine headless | `Marker` |
+| The actual editor UI | `Marker` + `MarkerEditor` |
+| Coloured code fences | + `MarkerHighlighting` (vendored tree-sitter grammars; skip it and code renders in flat mono) |
 
-```swift
-import Marker
-import MarkerEditor
+`MarkerEditor` depends on the core only — the tree-sitter payload never rides along uninvited.
 
-// 1. Create an editor model
-@State private var editor = EditorModel(text: myMarkdown)
+## 2. Build a `MarkerTheme`
 
-// 2. Build a theme from your design system
-let theme = MyMarkerTheme()
-
-// 3. Wire the editor view
-EditorView(
-  model: editor,
-  theme: theme,
-  highlighter: CodeHighlighter.shared,
-  onLinkActivate: { target in myApp.openLink(target) },
-  wikiCompletions: { query in myApp.searchWikiPages(query) },
-  onDropFiles: { urls in myApp.wikiLinks(for: urls) }
-)
-```
-
-## Seam reference
-
-### MarkerTheme: design tokens
-
-`MarkerTheme` is a protocol you implement to export design tokens:
+`MarkerTheme` (`Sources/MarkerEditor/MarkerTheme.swift`) is a plain **struct** — every design token
+the editor renders with. The package has no colours of its own (only `MarkerTheme.fallback`, a
+system-colour placeholder until the host injects yours).
 
 ```swift
-public protocol MarkerTheme {
-  // Colors
-  var backgroundColor: Color { get }
-  var textColor: Color { get }
-  var accentColor: Color { get }
-  var codeBackgroundColor: Color { get }
-  // ... (10 colors total)
-  
-  // Fonts
-  var proseFamily: Font.Design { get }  // .default, .serif, etc.
-  var monoFamily: Font.Design { get }
-  var uiFamily: Font.Design { get }
-  
-  // Sizes and weights
-  var bodySize: CGFloat { get }
-  var headingWeight: Font.Weight { get }
-  // ... (more metrics)
+extension MarkerTheme {
+    static let myApp = MarkerTheme(
+        ink: DS.text1, inkSoft: DS.text2, muted: DS.text3, faint: DS.text4,
+        deep: DS.brandDeep, bright: DS.brandBright, primary: DS.accent,
+        well: DS.well, line: DS.line, sheet: DS.sheet,
+        proseFamily: "Hanken Grotesk", monoFamily: "JetBrains Mono",   // bundled families, or…
+        proseDesign: .serif)                                           // …a system-font design
 }
 ```
 
-Build your theme once and pass it to every `EditorView` instance:
+**The ten core colours** (required): `ink`, `inkSoft`, `muted`, `faint` (the text ramp); `deep`,
+`bright`, `primary` (the accent: `primary` drives the caret, checked boxes, and active list markers;
+`deep` is accent-as-text); `well` (code wells, placeholder fills), `line` (hairlines), `sheet` (the
+page). 
+
+**Fonts:** `proseFamily` / `monoFamily` / `uiFamily` resolve a bundled font by name; `proseDesign` /
+`uiDesign` pick a system-font design (`.serif`, `.rounded`) with no font files. An explicit family
+wins over a design; a missing family falls back to the system (or monospaced system) font. A theme
+can never end up font-less.
+
+**Accent defaults** (optional, all appearance-adaptive, exposed as `MarkerTheme.default…`):
+`highlightBackground` (`==marker pen==`), `tableZebra`, `activeLineTint`, `codeString` /
+`codeConstant` / `codeType` (syntax colours), and for task boxes `onAccent` (the ✓ on a checked box)
+and `checkEmpty` (an empty box's border). Override only if your palette needs it.
+
+### Light & dark
+
+The editor has **no appearance logic of its own** — it resolves whatever colours you hand it at draw
+time. Hand it adaptive colours and it follows the system (or `.preferredColorScheme`) with no
+further plumbing:
 
 ```swift
-let theme = MyMarkerTheme()  // implements the protocol
-EditorView(model: editor, theme: theme, ...)
+static let myApp = MarkerTheme(
+    ink:   MarkerTheme.adaptive(light: 0x16241D, dark: 0xE9F1EB),
+    sheet: MarkerTheme.adaptive(light: 0xFFFFFF, dark: 0x0C110E),
+    well:  MarkerTheme.adaptive(light: 0x142818, lightAlpha: 0.05, dark: 0xFFFFFF, darkAlpha: 0.05),
+    …)
 ```
 
-The editor applies the theme to every element: headings, code blocks, tables, task checkboxes, inline formatting.
+`MarkerTheme.adaptive(light:lightAlpha:dark:darkAlpha:)` wraps an `NSColor(name:dynamicProvider:)`
+in a SwiftUI `Color`; your own dynamic `NSColor`s (asset-catalog or provider-based) work the same
+way via `Color(nsColor:)`. Static colours are fine too — they just look identical in both
+appearances. Two cautions: never enable `drawsBackground` on the editor's text view (paint the sheet
+behind it, as `EditorView` does — the text view's own background would cover the code wells and
+checkboxes), and dark is not an inversion (accent steps up a stop, hairlines flip polarity, code wells
+lift off a near-black sheet). See [MarkerEditor](MarkerEditor) → *Theming and appearance*.
 
-### onLinkActivate: handle link clicks
-
-When the user Cmd+clicks on a link in the editor, the `onLinkActivate` closure is called:
+## 3. Host the editor
 
 ```swift
-onLinkActivate: { target in
-  switch target {
-  case .url(let url):
-    NSWorkspace.shared.open(URL(string: url))
-  case .wiki(let pageName):
-    myApp.navigateToWikiPage(pageName)
-  }
-}
+@State private var editor = EditorModel(text: "")      // create ONCE; keep alive across documents
+
+EditorView(model: editor, theme: .myApp, highlighter: CodeHighlighter.shared)
 ```
 
-`MarkerLinkTarget` (`Sources/MarkerEditor/EditorView.swift:8`) names the kind: `.url(String)` for `[text](url)`, `<url>`, and bare URLs, or `.wiki(String)` for `[[wiki links]]`.
+- Open/close documents with `editor.load(text:)` — it resets the caret, undo, and the dirty
+  baseline. Don't `.id()`-reset the view.
+- Save `editor.text` verbatim; call `editor.markSaved()` after a successful write;
+  `editor.hasUnsavedChanges` is the dirty flag.
+- `editor.isSourceMode` flips WYSIWYG ⇄ raw source; `editor.hideMarkers` hides syntax markers in
+  Live mode; `editor.isFocused` is first-responder truth for the text view — gate focus-sensitive
+  menu key equivalents on it.
 
-### wikiCompletions: suggest wiki pages
+## 4. Wire the seams
 
-When the user types `[[`, a completion popup appears. The `wikiCompletions` closure is called with the query (text after `[[`):
+Unwired seams leave behaviour byte-identical to not having the feature. All are parameters of
+`EditorView.init` unless noted.
+
+| Seam | Fires when | You return |
+|---|---|---|
+| `onLinkActivate: (MarkerLinkTarget) -> Void` | Cmd+click on `[text](url)`, `<url>`, a bare URL, or `[[wiki link]]` | — (`.url(raw)` / `.wiki(name)`) |
+| `wikiCompletions: (String) -> [String]` | Typing inside `[[…` | ranked, capped candidates; the editor presents them and inserts undo-registered |
+| `onDropFiles: ([URL]) -> String?` | Non-image files dropped — called synchronously while the sandbox grant is live (mint bookmarks inside) | markdown for the drop caret, or nil to decline |
+| `onDropText: (String) -> String?` | Plain-string drags (e.g. your own list rows) | a markdown replacement, or nil to fall through |
+| `editor.onDropImages: ([CapturedImageDrop]) -> Void` (on the **model**) | Image drops; each carries a security-scoped bookmark minted at drop time | persist, then `editor.addImage(url:data:)` + `editor.insertImageReference(url:alt:)` |
+| `highlighter: CodeTokenProviding?` | Every code fence | `CodeHighlighter.shared`, your own provider, or nil for flat mono |
+
+`editor.setImages(_:)` seeds a document's image bytes after `load` (keys are the raw `![](destination)` strings).
+
+## 5. The formatting trio
+
+The ⌘K palette, the `FormatBar`, and your menu shortcuts all execute the **same `EditorTool`
+catalog** (`EditorTool.cursor` / `.selection` — metadata around an `EditorCommand`), so they can't
+drift apart:
 
 ```swift
-wikiCompletions: { query in
-  let candidates = myApp.allWikiPages()
-    .filter { $0.title.lowercased().contains(query.lowercased()) }
-    .prefix(10)  // cap at 10
-  return Array(candidates)
-}
+@State private var palette = CommandPaletteModel(editor: editor)
+
+if palette.isPresented { CommandPaletteView(driver: palette, theme: .myApp) }   // caret-anchored
+Button("Formatting…") { palette.toggle() }.keyboardShortcut("/", modifiers: .command)
+
+FormatBar(model: editor, theme: .myApp)                                          // persistent bar
+Button("Bold") { editor.runCommand(.bold) }.keyboardShortcut("b")               // menu
 ```
 
-Return an array of `WikiCompletionCandidate`s (or whatever your app's wiki type is). The editor renders them in the popup; the user selects with arrow keys and return.
+Every mutation — commands, checkbox clicks, completions, drops — goes through one undo-registered
+seam (`EditorView.apply(_:)`), so undo/redo always works.
 
-### onDropFiles: insert markdown for dropped files
+## 6. Read-only mode
 
-When a non-image file is dropped into the editor, `onDropFiles` is called:
+`editor.isReadOnly = true` (licence lock, viewer mode): the document stays scrollable, selectable,
+copyable; typing/paste/delete are refused natively; `runCommand`, `insertImageReference`, the drop
+and completion seams, and checkbox clicks all no-op (and the literal `[ ]` text is shown instead of a
+drawn box, so nothing looks clickable). The editor doesn't know *why* it's locked — that's app policy.
 
-```swift
-onDropFiles: { urls in
-  let links = urls.map { url in
-    "[\(url.lastPathComponent)](file://\(url.path))"
-  }
-  return links.joined(separator: "\n")  // or nil to reject
-}
-```
+## 7. The raw-string invariants (respect these)
 
-Return the markdown string to insert at the drop caret, or nil to decline the drop.
+1. **The storage is the file.** `editor.text` is the exact bytes; save it verbatim. Never
+   normalise, trim, or re-serialise what the editor holds.
+2. **Never mutate outside the seams.** Writing to the underlying `NSTextStorage` yourself bypasses
+   reparse, restyle, and undo.
+3. **Ranges are UTF-16 offsets into the current text.** Anything you cache (outline entries, block
+   ranges) is stale after any edit — re-read from `editor.document`.
+4. **External changes go through `load`** (or a full text swap) — that's what resets undo and the
+   dirty baseline correctly.
 
-### onDropText: insert markdown for dragged text
+Background: [Text Storage and Addressing](Text-Storage-and-Addressing) and
+[[marker/conventions/text-addressing-and-utf-16-invariants]].
 
-When plain text is dragged (e.g., a list item from your app), `onDropText` is called:
+## Lessons from the reference consumers
 
-```swift
-onDropText: { droppedText in
-  // Dragged text might be a row from a table; convert to markdown
-  return "- \(droppedText)"  // or nil for default insertion
-}
-```
-
-Return a markdown string, or nil to use default insertion (the text as-is).
-
-### EditorModel.onDropImages: handle dropped images
-
-When an image is dropped, security-scoped bookmarks are minted and passed to this closure:
-
-```swift
-editor.onDropImages = { drops in
-  for drop in drops {
-    // drop.bookmark is a Data containing a security-scoped bookmark
-    // drop.url is the original file URL
-    
-    let imagePath = myApp.saveImage(drop.url, bookmark: drop.bookmark)
-    let markdown = "![\(drop.filename)](\(imagePath))"
-    
-    editor.insertMarkdown(markdown, at: selectedRange)
-  }
-}
-```
-
-`CapturedImageDrop` (`Sources/Marker/Editor/EditorModel.swift:38`) holds the URL and bookmark. Use the bookmark to access the file after the drop grant expires.
-
-### CodeTokenProviding: syntax highlighting
-
-If you want code-fence syntax highlighting, pass a `CodeTokenProviding` object:
-
-```swift
-EditorView(
-  model: editor,
-  theme: theme,
-  highlighter: CodeHighlighter.shared,  // MarkerHighlighting's provider
-  ...
-)
-```
-
-Or nil for flat mono code:
-
-```swift
-EditorView(
-  model: editor,
-  theme: theme,
-  highlighter: nil,  // no syntax coloring
-  ...
-)
-```
-
-Implement your own provider by conforming to the protocol:
-
-```swift
-class MyHighlighter: CodeTokenProviding {
-  func tokens(code: String, language: String) -> [HighlightToken] {
-    // Fetch tokens from your service, local cache, etc.
-    // Return an array of HighlightToken (range + semantic kind)
-  }
-}
-```
-
-## Common patterns
-
-### Persisting edits
-
-`EditorModel` is `@Observable`, so changes propagate automatically to SwiftUI views:
-
-```swift
-@State private var editor = EditorModel(text: myMarkdown)
-
-// Whenever the user edits, editor.text changes
-// You can observe it:
-
-.onChange(of: editor.text) { newText in
-  mySaver.save(newText, to: myFile)  // async, debounced, etc.
-}
-```
-
-### Undo/redo
-
-`EditorModel` maintains undo/redo stacks. The user presses ⌘Z and ⌘⇧Z to undo/redo:
-
-```swift
-// Manual undo/redo (if your app has custom UI)
-editor.undo()
-editor.redo()
-```
-
-### Switching between WYSIWYG and raw source
-
-`EditorView` supports both modes. You can toggle via a toolbar button and `@State`:
-
-```swift
-@State private var showRawSource = false
-
-EditorView(model: editor, theme: theme, showRawSource: showRawSource, ...)
-```
-
-### Image path resolution
-
-Images in markdown can be relative paths, absolute paths, URLs, or data URIs. `ImagePathResolver` (in Marker core) handles the lookup:
-
-```swift
-let imageURL = ImagePathResolver.resolve(
-  imagePath: "images/screenshot.png",
-  relativeTo: myDocumentURL  // base for relative paths
-)
-
-if let imageURL = imageURL, case .local(let fileURL) = imageURL {
-  // Load the image from fileURL
-}
-```
-
-## Security and sandboxing
-
-When an image or file is dropped from outside your app's sandbox, macOS grants a temporary access right via a **security-scoped bookmark**. Marker automatically mints these and passes them to your drop handlers.
-
-Use the bookmark to re-open the file later:
-
-```swift
-// At drop time
-let bookmarkData = ...  // from the drop handler
-try bookmarkData.securityScopedURL { url in
-  // Now you can read from url
-  let data = try Data(contentsOf: url)
-}
-```
-
-## Integration checklist
-
-- [ ] Import `Marker` and `MarkerEditor`.
-- [ ] Create an `EditorModel` with your markdown text.
-- [ ] Implement `MarkerTheme` from your design system.
-- [ ] Wire `onLinkActivate` to your link-handling logic.
-- [ ] Wire `wikiCompletions` to your wiki-page search (or empty list if no wiki).
-- [ ] Wire `onDropFiles` and `onDropText` (or use nil for default behavior).
-- [ ] Pass `CodeHighlighter.shared` for syntax highlighting, or nil for mono.
-- [ ] Observe `editor.text` with `.onChange` to persist edits.
-- [ ] Test link clicks, completions, drops, and undo/redo.
+- **TrapperKeeper** consumes the package by local path (`../Marker`) — a TK build always runs the
+  current Marker checkout, tagged or not. Handy for iteration; remember it when a TK bug report
+  arrives ("which Marker is this?" → `git log` in the Marker checkout).
+- **ShabuBox** pins a version tag. Each Marker release is an annotated tag plus a GitHub Release
+  with notes (see [Building Marker](Building-Marker) → *Cutting a release*).
+- Theme changes are source-compatible but not always visually compatible — e.g. 0.9.0 moved the
+  empty checkbox from `muted` to the new `checkEmpty` token. Read the release notes before bumping.
 
 ---
 _Last updated: 2026-08-19_
