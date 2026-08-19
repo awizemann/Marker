@@ -20,7 +20,8 @@ there is no serializer to drift.
 `MarkerEditor` ships four themed components:
 
 - **`EditorView`** — the editor itself: live WYSIWYG or raw source mode, grid tables, boxed code
-  wells with hover copy, inline images, task-checkbox clicks, Cmd+click link activation.
+  wells with hover copy, inline images, drawn task checkboxes (click to toggle), Cmd+click link
+  activation — light and dark, following whatever appearance-adaptive colors your theme supplies.
 - **`CommandPaletteView`** — the caret-anchored ⌘K-style formatting palette (drive it with the
   core's `CommandPaletteModel`; the consumer owns the trigger key and presentation).
 - **`FormatBar`** — a compact persistent formatting bar over the same `EditorTool` catalog as the
@@ -69,5 +70,5 @@ EditorView(model: editor, theme: myTheme,                    // MarkerTheme from
 See **[docs/Integration.md](docs/Integration.md)** for the full consumer guide — choosing
 products, building a theme, wiring each seam, and the raw-string invariants to respect.
 
-Tests: 188 (182 core + editor logic, 6 highlighting). Used by
+Tests: 234 (195 core + editor logic, 6 highlighting, 33 AppKit editor — styling, TextKit 2 geometry, rendered light/dark). Used by
 [TrapperKeeper](https://github.com/awizemann) and ShabuBox.
