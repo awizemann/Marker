@@ -283,7 +283,13 @@ private struct ImagePlaceholderView: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(markerHex: 0x142818, alpha: 0.04)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(Self.placeholderWell))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.line))
     }
+
+    /// The placeholder's own faint well — the one editor color with no theme slot behind it. Flips
+    /// polarity like `theme.well` does (dark ink on light, white at low alpha on dark) instead of
+    /// staying a frozen light-mode wash.
+    private static let placeholderWell = MarkerTheme.adaptive(light: 0x142818, lightAlpha: 0.04,
+                                                              dark: 0xFFFFFF, darkAlpha: 0.04)
 }

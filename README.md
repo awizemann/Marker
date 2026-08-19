@@ -34,7 +34,7 @@ App-specific behavior enters through closures and protocols — never by forking
 
 | Seam | What it does |
 |---|---|
-| `MarkerTheme` | Every design token the editor renders with: 10 palette colors, prose/mono/ui font families (or system-font designs like `.serif`), accent defaults. Build one from your design system. |
+| `MarkerTheme` | Every design token the editor renders with: 10 palette colors, prose/mono/ui font families (or system-font designs like `.serif`), accent defaults (incl. `onAccent`/`checkEmpty` for task boxes). Build one from your design system; pass appearance-adaptive colors (`MarkerTheme.adaptive(light:dark:)` or your own dynamic `NSColor`s) and the editor follows light/dark with no further plumbing. |
 | `onLinkActivate` | Cmd+click on `[text](url)`, `<url>`, bare URLs, or `[[wiki links]]` — you resolve and open. |
 | `wikiCompletions` | Candidates for the `[[` completion popup; you rank and cap, the editor presents. |
 | `onDropFiles` | Non-image file drops → the markdown to insert at the drop caret (or nil to decline). |

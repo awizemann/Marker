@@ -35,6 +35,10 @@ public struct MarkerTheme: Sendable {
     public var codeString: Color
     public var codeConstant: Color
     public var codeType: Color
+    /// Foreground riding ON the primary accent — the ✓ inside a filled task checkbox.
+    public var onAccent: Color
+    /// The 1.5px border of an EMPTY task checkbox (no fill).
+    public var checkEmpty: Color
 
     public init(
         ink: Color,
@@ -50,19 +54,22 @@ public struct MarkerTheme: Sendable {
         proseFamily: String? = nil,
         monoFamily: String? = nil,
         uiFamily: String? = nil,
-        // Accent defaults spelled with the PUBLIC sRGB initializer (a public init's default arguments
-        // are serialized into clients, so they can't reference the internal `markerHex` helper).
-        // Values are hex-per-channel: 0xFFF1A8, 0x142818 α0.05, 0x142818 α0.035, 0xB07A12, 0x2A7C94, 0x0E7D46.
-        highlightBackground: Color = Color(.sRGB, red: 0xFF/255.0, green: 0xF1/255.0, blue: 0xA8/255.0, opacity: 1),      // == highlight marker-pen
-        tableZebra: Color = Color(.sRGB, red: 0x14/255.0, green: 0x28/255.0, blue: 0x18/255.0, opacity: 0.05),            // faint alternate-row band
-        activeLineTint: Color = Color(.sRGB, red: 0x14/255.0, green: 0x28/255.0, blue: 0x18/255.0, opacity: 0.035),       // soft current-line band
-        codeString: Color = Color(.sRGB, red: 0xB0/255.0, green: 0x7A/255.0, blue: 0x12/255.0, opacity: 1),   // strings — warm gold, readable on grey
-        codeConstant: Color = Color(.sRGB, red: 0x2A/255.0, green: 0x7C/255.0, blue: 0x94/255.0, opacity: 1), // numbers/constants — teal
-        codeType: Color = Color(.sRGB, red: 0x0E/255.0, green: 0x7D/255.0, blue: 0x46/255.0, opacity: 1),      // types — deep green
+        // Accent defaults — the appearance-adaptive `MarkerTheme.default…` tokens below (public
+        // statics, so a public init's default args can reference them; built ONCE, so constructing
+        // a theme doesn't mint fresh dynamic colors each time).
+        highlightBackground: Color = MarkerTheme.defaultHighlightBackground,
+        tableZebra: Color = MarkerTheme.defaultTableZebra,
+        activeLineTint: Color = MarkerTheme.defaultActiveLineTint,
+        codeString: Color = MarkerTheme.defaultCodeString,
+        codeConstant: Color = MarkerTheme.defaultCodeConstant,
+        codeType: Color = MarkerTheme.defaultCodeType,
         // System-font DESIGN variants — appended (with defaults) after the original parameters so
         // every existing consumer call site keeps compiling unchanged.
         proseDesign: NSFontDescriptor.SystemDesign? = nil,
-        uiDesign: NSFontDescriptor.SystemDesign? = nil
+        uiDesign: NSFontDescriptor.SystemDesign? = nil,
+        // Task-checkbox tokens — appended (with defaults) so existing call sites keep compiling.
+        onAccent: Color = MarkerTheme.defaultOnAccent,
+        checkEmpty: Color = MarkerTheme.defaultCheckEmpty
     ) {
         self.ink = ink
         self.inkSoft = inkSoft
@@ -85,6 +92,8 @@ public struct MarkerTheme: Sendable {
         self.codeType = codeType
         self.proseDesign = proseDesign
         self.uiDesign = uiDesign
+        self.onAccent = onAccent
+        self.checkEmpty = checkEmpty
     }
 
     /// A pre-wiring default built from system-ish colors — used only so views (CodeWellTextView) have
@@ -101,6 +110,51 @@ public struct MarkerTheme: Sendable {
         line: Color(nsColor: .separatorColor),
         sheet: Color(nsColor: .textBackgroundColor)
     )
+}
+
+// MARK: - Appearance-adaptive colors
+
+extension MarkerTheme {
+
+    /// Build an **appearance-adaptive** color from two hex values — the light one resolves under
+    /// `.aqua`, the dark one under `.darkAqua`.
+    ///
+    /// Same shape as TrapperKeeper's `TKColor.adaptive`, exposed publicly so a consumer WITHOUT that
+    /// design system can still build an adaptive `MarkerTheme` (and so this type's own accent
+    /// defaults — which are inlined into clients — have a public spelling to use).
+    ///
+    /// The result wraps a dynamic `NSColor`, which survives the `Color` → `NSColor` round trip the
+    /// editor's AppKit call sites make: it stays dynamic and re-resolves per drawing appearance, so
+    /// nothing downstream has to plumb an appearance through.
+    public static func adaptive(light: UInt, lightAlpha: Double = 1,
+                                dark: UInt, darkAlpha: Double = 1) -> Color {
+        let lightColor = NSColor(markerHex: light, alpha: lightAlpha)
+        let darkColor = NSColor(markerHex: dark, alpha: darkAlpha)
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? darkColor : lightColor
+        })
+    }
+}
+
+// MARK: - Default accent tokens (appearance-adaptive; light values are the original palette)
+
+public extension MarkerTheme {
+    /// Highlight marker-pen (`==text==`): pale yellow on light, amber wash on dark.
+    static let defaultHighlightBackground = MarkerTheme.adaptive(light: 0xFFF1A8, dark: 0xE9BB72, darkAlpha: 0.30)
+    /// Faint alternate-row band in grid tables — hairline family, flips polarity on dark.
+    static let defaultTableZebra = MarkerTheme.adaptive(light: 0x142818, lightAlpha: 0.05, dark: 0xFFFFFF, darkAlpha: 0.05)
+    /// Soft current-line band: ink wash on light, the design's green-tinted lift on dark.
+    static let defaultActiveLineTint = MarkerTheme.adaptive(light: 0x142818, lightAlpha: 0.035, dark: 0x1FBE6A, darkAlpha: 0.08)
+    /// Code strings — warm gold.
+    static let defaultCodeString = MarkerTheme.adaptive(light: 0xB07A12, dark: 0xE5BB72)
+    /// Code numbers/constants — teal.
+    static let defaultCodeConstant = MarkerTheme.adaptive(light: 0x2A7C94, dark: 0x74CEE2)
+    /// Code types — accent-text green (the "deep" step, which lightens on dark).
+    static let defaultCodeType = MarkerTheme.adaptive(light: 0x0E7D46, dark: 0x4BDA8D)
+    /// Ink drawn ON the accent (the ✓ in a checked task box): white on light, near-black on dark.
+    static let defaultOnAccent = MarkerTheme.adaptive(light: 0xFFFFFF, dark: 0x062012)
+    /// Border of an empty task box.
+    static let defaultCheckEmpty = MarkerTheme.adaptive(light: 0xC7D0C9, dark: 0x48584F)
 }
 
 // MARK: - Font resolution (theme families, system fallback)
@@ -177,17 +231,17 @@ extension MarkerTheme {
 
 // MARK: - Internal hex color helper
 
-extension Color {
-    /// 0xRRGGBB initializer for the theme's default accents (internal — MarkerEditor deliberately
-    /// does not depend on any consumer design system's `Color(hex:)`).
+extension NSColor {
+    /// 0xRRGGBB initializer in the sRGB space — used to build the two branches of an adaptive dynamic
+    /// color. Internal on purpose: MarkerEditor deliberately does not depend on any consumer design
+    /// system's `Color(hex:)`, and `adaptive` is the public door onto this.
     ///
-    /// Bit layout: red is bits 16–23, green is bits 8–15, blue is bits 0–7.
-    /// Each channel is masked to a byte and normalized to 0...1 in the sRGB space.
-    init(markerHex hex: UInt, alpha: Double = 1) {
-        self.init(.sRGB,
-                  red:   Double((hex >> 16) & 0xFF) / 255,
-                  green: Double((hex >> 8)  & 0xFF) / 255,
-                  blue:  Double( hex        & 0xFF) / 255,
-                  opacity: alpha)
+    /// Bit layout: red is bits 16–23, green is bits 8–15, blue is bits 0–7; each channel is masked to
+    /// a byte and normalized to 0...1.
+    convenience init(markerHex hex: UInt, alpha: Double = 1) {
+        self.init(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+                  green:   CGFloat((hex >> 8)  & 0xFF) / 255,
+                  blue:    CGFloat( hex        & 0xFF) / 255,
+                  alpha:   CGFloat(alpha))
     }
 }

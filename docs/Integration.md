@@ -34,8 +34,30 @@ extension MarkerTheme {
 - **Fallbacks are total:** a nil/uninstalled family falls back to the system (or monospaced
   system) font; an unresolvable design falls back to the plain system font. A theme can never end
   up font-less.
-- The six accent slots (highlight, table zebra, active-line tint, three code colors) have tuned
-  defaults — override only if your palette needs it.
+- The accent slots (highlight, table zebra, active-line tint, three code colors, and the task-box
+  `onAccent` / `checkEmpty`) have tuned, appearance-adaptive defaults (`MarkerTheme.default…`) —
+  override only if your palette needs it.
+
+### Light & dark
+
+The editor has no appearance logic of its own: it resolves whatever colors you hand it at draw
+time, so **pass adaptive colors and it follows the system (or `.preferredColorScheme`) for free.**
+Build them with `MarkerTheme.adaptive(light:dark:)` (hex + optional alpha per side) or wrap your
+own `NSColor(name:dynamicProvider:)` in `Color(nsColor:)`:
+
+```swift
+static let myApp = MarkerTheme(
+    ink:   MarkerTheme.adaptive(light: 0x16241D, dark: 0xE9F1EB),
+    sheet: MarkerTheme.adaptive(light: 0xFFFFFF, dark: 0x0C110E),
+    well:  MarkerTheme.adaptive(light: 0x142818, lightAlpha: 0.05, dark: 0xFFFFFF, darkAlpha: 0.05),
+    …)
+```
+
+A static (non-adaptive) `Color` is fine too — it just looks the same in both appearances. Two
+things to keep in mind: don't turn on `drawsBackground` on the editor's text view (paint the
+sheet behind it, as `EditorView` does — the text view's own background would cover the code wells
+and checkboxes), and dark values are *not* an inversion: the accent typically steps up a stop,
+hairlines flip polarity, and code wells lift off a near-black sheet rather than sinking.
 
 ## 3. Host the editor
 

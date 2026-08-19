@@ -183,6 +183,16 @@ final class CodeWellTextView: NSTextView {
 
     // MARK: Drawing (the boxed well, behind the text)
 
+    /// Custom drawing (wells, current-line tint, checkboxes) resolves theme colors at draw time and
+    /// bakes the checkbox tint into a cached image, so an appearance flip must repaint. NSTextView
+    /// redraws its own attributed-string colors (they stay dynamic `NSColor`s), and the copy button's
+    /// `contentTintColor` holds the dynamic color live, but nothing guarantees a full invalidation for
+    /// OUR drawn layers — ask for one explicitly.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         drawCodeWells()      // behind the text…
         drawActiveLine()     // …the current-line tint over the well but behind glyphs…
@@ -229,8 +239,13 @@ final class CodeWellTextView: NSTextView {
             let rect = CGRect(x: cell.midX + origin.x - side / 2,
                               y: cell.midY + origin.y - side / 2,
                               width: side, height: side)
-            let color = NSColor(box.checked ? theme.primary : theme.muted)
-            guard let image = Self.checkboxImage(checked: box.checked, color: color, side: side) else { continue }
+            // Checked = ✓ (onAccent) on a square FILLED with the primary accent; empty = an
+            // unfilled square stroked in checkEmpty. Palette order is glyph-first, then fill.
+            let palette: [NSColor] = box.checked
+                ? [NSColor(theme.onAccent), NSColor(theme.primary)]
+                : [NSColor(theme.checkEmpty)]
+            guard let image = Self.checkboxImage(checked: box.checked, palette: palette, side: side,
+                                                 appearance: effectiveAppearance) else { continue }
             image.draw(in: rect)
         }
     }
@@ -251,17 +266,34 @@ final class CodeWellTextView: NSTextView {
     /// ~the body font's cap area — the checkbox reads as a control, not a glyph.
     private static let checkboxPointSize: CGFloat = 14
 
-    /// A palette-tinted SF Symbol for the cell. Cached per (checked, color, size) so a scroll doesn't
-    /// re-render symbol images on every frame.
+    /// A palette-tinted SF Symbol for the cell. Cached per (checked, RESOLVED palette, size) so a
+    /// scroll doesn't re-render symbol images on every frame.
+    ///
+    /// The key is the palette RESOLVED under the view's appearance, not the color objects: the tints
+    /// are BAKED into the image at render time, so a dynamic theme color (whose `description` is a
+    /// per-instance UUID, identical in both appearances and fresh on every `adaptive` call) would both
+    /// serve a light checkbox back after a flip to dark AND grow the cache without bound for a
+    /// consumer that rebuilds its theme each render. Resolved components have neither problem.
     private static var checkboxImageCache: [String: NSImage] = [:]
 
-    private static func checkboxImage(checked: Bool, color: NSColor, side: CGFloat) -> NSImage? {
-        let key = "\(checked)|\(color.description)|\(Int(side.rounded()))"
+    /// Internal (not private) so tests can render the two states and compare them.
+    static func checkboxImage(checked: Bool, palette: [NSColor], side: CGFloat,
+                                      appearance: NSAppearance) -> NSImage? {
+        // Resolve the (possibly dynamic) tints under the VIEW's appearance — not whatever drawing
+        // appearance happens to be current when this first runs — and key the cache on the result.
+        var resolved = palette
+        appearance.performAsCurrentDrawingAppearance {
+            resolved = palette.map { $0.usingColorSpace(.sRGB) ?? $0 }
+        }
+        // The appearance name rides along too: if a tint can't be resolved to sRGB (pattern/catalog
+        // oddities) the fallback description is per-instance, and the name keeps light/dark apart.
+        let key = "\(checked)|\(appearance.name.rawValue)|\(resolved.map(\.description).joined(separator: ","))|\(Int(side.rounded()))"
         if let cached = checkboxImageCache[key] { return cached }
         let name = checked ? "checkmark.square.fill" : "square"
         guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: checked ? "Checked" : "Unchecked") else { return nil }
-        let config = NSImage.SymbolConfiguration(pointSize: side, weight: .regular)
-            .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+        // The empty square is a hairline at this size; .medium approximates the design's 1.5px stroke.
+        let config = NSImage.SymbolConfiguration(pointSize: side, weight: checked ? .regular : .medium)
+            .applying(NSImage.SymbolConfiguration(paletteColors: resolved))
         let image = symbol.withSymbolConfiguration(config) ?? symbol
         // The system symbol arrives as a TEMPLATE image, which `draw(in:)` would repaint with the
         // current fill color and throw the palette tint away. Opt out so the tint survives.
